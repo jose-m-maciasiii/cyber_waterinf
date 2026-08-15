@@ -1,0 +1,4 @@
+
+# Downloaded EPA SDWA source data (large and reproducible; keep out of Git).
+data/SDWA_latest_downloads/
+*.DS_Store
