@@ -1,6 +1,8 @@
 
 # Downloaded EPA SDWA source data (large and reproducible; keep out of Git).
 data/SDWA_latest_downloads/
+data/geocoded/
+data/tiles/
 *.DS_Store
 
 *.csv
