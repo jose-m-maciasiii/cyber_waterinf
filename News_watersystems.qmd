@@ -1,0 +1,20 @@
+---
+title: "News stories on water systems"
+format: html
+---
+
+# States of interest
+
+- Michigan:
+    - Source 1: https://www.cbsnews.com/news/more-states-water-systems-cyberattacks-iran-backed-hackers/
+- Minnesota: 
+    - Source 1: https://www.bbc.com/news/articles/c934dq95zpgo
+    - Source 2: https://www.cbsnews.com/news/more-states-water-systems-cyberattacks-iran-backed-hackers/
+- New Jersey:
+    - source 1: https://www.bbc.com/news/articles/c934dq95zpgo
+- South Dakota
+    - source 1: https://www.bbc.com/news/articles/c934dq95zpgo
+    - Source 2: https://www.cbsnews.com/news/more-states-water-systems-cyberattacks-iran-backed-hackers/
+- Georgia
+    - Source 1: https://www.bbc.com/news/articles/c934dq95zpgo
+    - Source 2: Clayton County Water Authority https://www.cbsnews.com/news/more-states-water-systems-cyberattacks-iran-backed-hackers/
