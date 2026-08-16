@@ -667,6 +667,7 @@ if not selected_district:
         map_style=MAP_STYLE,
         tooltip=MAP_TOOLTIP,
     )
+    show_map_legend(census_variable, show_vulnerable)
     state_map_event = st.pydeck_chart(
         state_deck,
         use_container_width=True,
@@ -675,7 +676,6 @@ if not selected_district:
         selection_mode="single-object",
         key=f"state-map-{selected_state}",
     )
-    show_map_legend(census_variable, show_vulnerable)
     st.caption(
         "The statewide view shows all available districts and small-CWS data "
         "for the selected state."
@@ -755,6 +755,7 @@ with map_col:
         map_style=MAP_STYLE,
         tooltip=MAP_TOOLTIP,
     )
+    show_map_legend(census_variable, show_vulnerable)
     map_event = st.pydeck_chart(
         deck,
         use_container_width=True,
@@ -763,7 +764,6 @@ with map_col:
         selection_mode="single-object",
         key=f"district-map-{selected_district}",
     )
-    show_map_legend(census_variable, show_vulnerable)
     if census_variable:
         st.caption(
             f"Census block groups are colored by {census_variable.lower()}. "
