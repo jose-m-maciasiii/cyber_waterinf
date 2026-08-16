@@ -195,6 +195,23 @@ def ids_features(
     return {"type": "FeatureCollection", "features": features}
 
 
+def county_block_group_features(
+    data: dict[str, Any], county_geoid: str
+) -> dict[str, Any]:
+    """Filter block groups by county field, with GEOID-prefix fallback."""
+    county_geoid = str(county_geoid).zfill(5)
+    features = []
+    for feature in data.get("features", []):
+        properties = feature.get("properties", {})
+        feature_county = str(properties.get("county_geoid", "")).zfill(5)
+        block_group_geoid = str(properties.get("GEOID", ""))
+        if feature_county == county_geoid or block_group_geoid.startswith(
+            county_geoid
+        ):
+            features.append(feature)
+    return {"type": "FeatureCollection", "features": features}
+
+
 def state_features(data: dict[str, Any], state_code: str) -> dict[str, Any]:
     """Keep features assigned to any congressional district in a state."""
     features = []
@@ -805,11 +822,11 @@ if selected_county:
     selected_service_geo = subset_geojson(
         county_service_geo, selected_county, "county_geoid"
     )
-    selected_communities_geo = subset_geojson(
-        communities_geo, selected_county, "county_geoid"
+    selected_communities_geo = county_block_group_features(
+        communities_geo, selected_county
     )
-    selected_vulnerable_geo = subset_geojson(
-        vulnerable_geo, selected_county, "county_geoid"
+    selected_vulnerable_geo = county_block_group_features(
+        vulnerable_geo, selected_county
     )
     selected_service_geo = add_geojson_tooltips(selected_service_geo, "service_area")
     selected_communities_geo = add_geojson_tooltips(
@@ -856,6 +873,13 @@ if selected_county:
         "Service-area coverage",
         f"{number(county_row['cws_service_area_sq_km'])} km²",
     )
+
+    if show_vulnerable and not selected_vulnerable_geo["features"]:
+        st.info(
+            "This county does not contain a block group in the highest "
+            "disadvantage decile for this five-state analysis. Choose an "
+            "optional Census variable to display all block groups in the county."
+        )
 
     map_col, context_col = st.columns([3.4, 1], gap="large")
     with map_col:
