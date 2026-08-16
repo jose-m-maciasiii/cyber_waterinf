@@ -179,6 +179,30 @@ census_variables <- c(
     broadband_households = "B28002_004"
 )
 
+# With `output = "wide"`, tidycensus appends E to estimate columns and M to
+# margins of error. Remove only the original E columns after creating readable
+# aliases. `ends_with("E")` is unsafe because tidyselect is case-insensitive and
+# would also remove names such as `median_household_income` and
+# `poverty_universe`.
+acs_estimate_columns <- str_c(names(census_variables), "E")
+
+# Detailed poverty table B17001 is not published at the block-group level.
+# Use collapsed table C17002 there; its first two ratio categories together
+# represent the population below the poverty threshold.
+block_group_census_variables <- c(
+    census_variables[!names(census_variables) %in% c(
+        "poverty_universe",
+        "population_below_poverty"
+    )],
+    poverty_universe = "C17002_001",
+    poverty_below_half = "C17002_002",
+    poverty_half_to_one = "C17002_003"
+)
+block_group_estimate_columns <- str_c(
+    names(block_group_census_variables),
+    "E"
+)
+
 census <- get_acs(
     geography = "congressional district",
     variables = census_variables,
@@ -215,12 +239,12 @@ census <- get_acs(
         broadband_households = broadband_householdsE,
         broadband_rate = 100 * broadband_households / internet_households
     ) |>
-    select(-ends_with("E"))
+    select(-all_of(acs_estimate_columns))
 
 
 census_block <- get_acs(
     geography = "block group",
-    variables = census_variables,
+    variables = block_group_census_variables,
     state = state_list,
     year = 2024,
     survey = "acs5",
@@ -236,13 +260,13 @@ census_block <- get_acs(
         unemployed_population = unemployed_populationE,
         unemployment_rate = 100 * unemployed_population / civilian_labor_force,
         poverty_universe = poverty_universeE,
-        population_below_poverty = population_below_povertyE,
+        population_below_poverty = poverty_below_halfE + poverty_half_to_oneE,
         poverty_rate = 100 * population_below_poverty / poverty_universe,
         internet_households = internet_householdsE,
         broadband_households = broadband_householdsE,
         broadband_rate = 100 * broadband_households / internet_households
     ) |>
-    select(-ends_with("E"))
+    select(-all_of(block_group_estimate_columns))
 
 # Tract-level version of the same ACS measures for the second analysis level.
 census_tract <- get_acs(
@@ -269,7 +293,7 @@ census_tract <- get_acs(
         broadband_households = broadband_householdsE,
         broadband_rate = 100 * broadband_households / internet_households
     ) |>
-    select(-ends_with("E"))
+    select(-all_of(acs_estimate_columns))
 
 # The Census Bureau classifies population at the block level as urban or rural.
 # DHC table P2 aggregates those counts to block groups, which may be fully urban,
@@ -1044,6 +1068,90 @@ service_area_tract_summary <- service_area_tract_crosswalk |>
         .groups = "drop"
     )
 
+# Block-group version of the EPA crosswalk for localized vulnerability analysis
+# and future visualization. As with the tract results, gross estimates may count
+# overlapping service areas more than once; capped estimates cannot exceed the
+# block group's Census population or ACS household count.
+service_area_block_group_crosswalk <- read_csv(
+    "data/SDWA_latest_downloads/3_0/Census_Tables/Block_Groups_V_3_0.csv",
+    show_col_types = FALSE
+) |>
+    clean_names() |>
+    rename(block_group_geoid = geoid20) |>
+    semi_join(water_pub, by = "pwsid") |>
+    inner_join(
+        census_block |>
+            st_drop_geometry() |>
+            transmute(
+                block_group_geoid = GEOID,
+                block_group_2020_population = decennial_population,
+                block_group_2024_households = total_households,
+                block_group_median_household_income = median_household_income
+            ),
+        by = "block_group_geoid",
+        relationship = "many-to-one"
+    ) |>
+    left_join(
+        water_pub |> select(pwsid, active_component_count),
+        by = "pwsid",
+        relationship = "many-to-one"
+    ) |>
+    mutate(
+        estimated_households_served_gross =
+            block_group_2024_households * bldg_weight
+    )
+
+service_area_block_group_summary <- service_area_block_group_crosswalk |>
+    group_by(block_group_geoid) |>
+    summarise(
+        cws_service_area_count = n_distinct(pwsid),
+        cws_component_count = sum(
+            active_component_count[!duplicated(pwsid)],
+            na.rm = TRUE
+        ),
+        estimated_cws_service_population_gross = sum(pop20_bw, na.rm = TRUE),
+        estimated_cws_service_population = pmin(
+            estimated_cws_service_population_gross,
+            first(block_group_2020_population)
+        ),
+        estimated_cws_service_households_gross = sum(
+            estimated_households_served_gross,
+            na.rm = TRUE
+        ),
+        estimated_cws_service_households = pmin(
+            estimated_cws_service_households_gross,
+            first(block_group_2024_households)
+        ),
+        estimated_service_area_median_household_income = if_else(
+            estimated_cws_service_population > 0,
+            first(block_group_median_household_income),
+            NA_real_
+        ),
+        .groups = "drop"
+    )
+
+census_block <- census_block |>
+    left_join(
+        service_area_block_group_summary,
+        by = c("GEOID" = "block_group_geoid"),
+        relationship = "one-to-one"
+    ) |>
+    mutate(
+        state = str_extract(NAME, "(?<=; )[^;]+$"),
+        state_po = state.abb[match(state, state.name)],
+        across(
+            c(
+                cws_service_area_count,
+                cws_component_count,
+                estimated_cws_service_population_gross,
+                estimated_cws_service_population,
+                estimated_cws_service_households_gross,
+                estimated_cws_service_households
+            ),
+            ~ replace_na(.x, 0)
+        )
+    )
+
 # Exact polygon intersections provide service-area counts and area within each
 # current congressional district. Both summed and dissolved area are retained;
 # the dissolved measure avoids double-counting overlapping service polygons.
@@ -1625,3 +1733,211 @@ census_map
 
 # Stop the local PMTiles server when you are finished with the map:
 stop_server()
+
+
+######################## analysis ########################
+
+# water_pubs
+read_csv(
+    "data/SDWA_latest_downloads/SDWA_PUB_WATER_SYSTEMS.CSV"
+) |>
+    clean_names() |>
+    filter(
+        pws_activity_code == "A"
+    ) |>
+    nrow()
+
+read_csv(
+    "data/SDWA_latest_downloads/SDWA_PUB_WATER_SYSTEMS.CSV"
+) |>
+    clean_names() |>
+    filter(
+        pws_activity_code == "A" &
+            pop_cat_3_code == 1 &
+            pws_type_code == "CWS"
+    ) |>
+    nrow()
+
+glimpse(target_districts_2024)
+
+# target_districts_2024
+# census_tract
+
+# Rank the Census block groups reached by at least one target CWS.
+# The vulnerability score gives equal weight to:
+#   1. a higher ACS poverty rate; and
+#   2. a lower ACS median household income.
+# Scores are relative to CWS-served block groups in these five states, rather
+# than a national measure. Change `vulnerable_share` to examine a broader or
+# narrower group (for example, 0.20 for the most vulnerable 20 percent).
+vulnerable_share <- 0.10
+
+block_group_vulnerability_ranked <- census_block |>
+    filter(
+        cws_service_area_count > 0,
+        estimated_cws_service_population > 0,
+        is.finite(poverty_rate),
+        is.finite(median_household_income)
+    ) |>
+    mutate(
+        high_poverty_percentile = percent_rank(poverty_rate),
+        low_income_percentile = percent_rank(-median_household_income),
+        vulnerability_score = 100 * (
+            high_poverty_percentile + low_income_percentile
+        ) / 2
+    ) |>
+    arrange(desc(vulnerability_score)) |>
+    mutate(vulnerability_rank = row_number())
+
+vulnerable_block_group_count <- ceiling(
+    nrow(block_group_vulnerability_ranked) * vulnerable_share
+)
+
+most_vulnerable_cws_block_groups <- block_group_vulnerability_ranked |>
+    slice_max(
+        vulnerability_score,
+        n = vulnerable_block_group_count,
+        with_ties = TRUE
+    ) |>
+    arrange(vulnerability_rank)
+
+# Preserve the system-level records behind the block-group summary. A CWS can
+# serve multiple block groups, so count distinct PWSIDs for the system universe.
+most_vulnerable_cws <- service_area_block_group_crosswalk |>
+    semi_join(
+        most_vulnerable_cws_block_groups |>
+            st_drop_geometry(),
+        by = c("block_group_geoid" = "GEOID")
+    ) |>
+    group_by(pwsid) |>
+    summarise(
+        vulnerable_block_groups_served = n_distinct(block_group_geoid),
+        estimated_vulnerable_population_gross = sum(pop20_bw, na.rm = TRUE),
+        .groups = "drop"
+    ) |>
+    left_join(
+        water_pub,
+        by = "pwsid",
+        relationship = "one-to-one"
+    )
+
+# Identify every representative for block groups that cross district boundaries,
+# rather than keeping only the primary district assignment.
+vulnerable_block_group_representation <- block_group_district_overlaps |>
+    semi_join(
+        most_vulnerable_cws_block_groups |>
+            st_drop_geometry() |>
+            select(GEOID),
+        by = "GEOID"
+    ) |>
+    distinct(
+        congressional_district,
+        elected_representative,
+        representative_party
+    ) |>
+    filter(!is.na(representative_party), representative_party != "")
+
+vulnerable_party_summary <- vulnerable_block_group_representation |>
+    count(representative_party, name = "representative_count") |>
+    arrange(desc(representative_count), representative_party)
+
+vulnerable_block_group_summary <- most_vulnerable_cws_block_groups |>
+    st_drop_geometry() |>
+    summarise(
+        vulnerable_block_group_count = n(),
+        distinct_cws_count = n_distinct(most_vulnerable_cws$pwsid),
+        average_cws_per_block_group = mean(cws_service_area_count),
+        population_weighted_poverty_rate = weighted.mean(
+            poverty_rate,
+            estimated_cws_service_population,
+            na.rm = TRUE
+        ),
+        minimum_median_household_income = min(
+            median_household_income,
+            na.rm = TRUE
+        ),
+        maximum_median_household_income = max(
+            median_household_income,
+            na.rm = TRUE
+        ),
+        household_weighted_mean_block_group_median_income = weighted.mean(
+            median_household_income,
+            estimated_cws_service_households,
+            na.rm = TRUE
+        ),
+        state_count = n_distinct(state_po),
+        states_covered = str_c(sort(unique(state_po)), collapse = ", "),
+        congressional_district_count = n_distinct(
+            vulnerable_block_group_representation$congressional_district
+        ),
+        representative_party_count = n_distinct(
+            vulnerable_block_group_representation$representative_party
+        ),
+        representative_parties = str_c(
+            sort(unique(
+                vulnerable_block_group_representation$representative_party
+            )),
+            collapse = ", "
+        ),
+        estimated_population_served = round(
+            sum(estimated_cws_service_population, na.rm = TRUE)
+        )
+    )
+
+# Ready-to-use prose. Poverty is a population measure, while income describes
+# households; wording the result this way avoids conflating the two universes.
+vulnerability_analysis_text <- vulnerable_block_group_summary |>
+    transmute(
+        text = str_glue(
+            "In my analysis of small community water systems and the ",
+            "communities they serve, I rank Census block groups using equal ",
+            "parts ",
+            "high poverty and low median household income. The most vulnerable ",
+            "{scales::percent(vulnerable_share, accuracy = 1)} includes ",
+            "{scales::comma(vulnerable_block_group_count)} block groups served by ",
+            "{scales::comma(distinct_cws_count)} distinct CWS, or an average ",
+            "of {round(average_cws_per_block_group, 1)} CWS per block group. ",
+            "These communities span {state_count} states ({states_covered}) ",
+            "and {scales::comma(congressional_district_count)} congressional ",
+            "districts whose representatives are affiliated with ",
+            "{representative_parties}. Their ",
+            "population-weighted poverty rate is ",
+            "{scales::percent(population_weighted_poverty_rate / 100, accuracy = 0.1)}, ",
+            "and block-group median household incomes range from ",
+            "{scales::dollar(minimum_median_household_income, accuracy = 1)} to ",
+            "{scales::dollar(maximum_median_household_income, accuracy = 1)}."
+        )
+    ) |>
+    pull(text)
+
+# Save reusable spatial and tabular layers for later mapping and analysis.
+analysis_output_dir <- "data/analysis"
+dir.create(analysis_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+st_write(
+    most_vulnerable_cws_block_groups,
+    file.path(analysis_output_dir, "most_vulnerable_cws_block_groups.gpkg"),
+    layer = "most_vulnerable_cws_block_groups",
+    delete_layer = TRUE,
+    quiet = TRUE
+)
+saveRDS(
+    most_vulnerable_cws_block_groups,
+    file.path(analysis_output_dir, "most_vulnerable_cws_block_groups.rds")
+)
+write_csv(
+    most_vulnerable_cws_block_groups |> st_drop_geometry(),
+    file.path(analysis_output_dir, "most_vulnerable_cws_block_groups.csv")
+)
+saveRDS(
+    most_vulnerable_cws,
+    file.path(analysis_output_dir, "most_vulnerable_cws.rds")
+)
+write_csv(
+    most_vulnerable_cws,
+    file.path(analysis_output_dir, "most_vulnerable_cws.csv")
+)
+
+vulnerable_block_group_summary
+vulnerable_party_summary
+vulnerability_analysis_text
