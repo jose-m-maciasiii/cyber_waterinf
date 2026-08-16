@@ -2027,8 +2027,11 @@ district_dashboard <- target_districts_2024 |>
     ) |>
     simplify_for_dashboard(tolerance_m = 150)
 
-served_block_groups_dashboard <- census_block |>
-    filter(cws_service_area_count > 0, !st_is_empty(geometry)) |>
+# Complete block-group coverage for optional statewide Census shading. The
+# vulnerability overlay remains a separate layer containing only the highest
+# vulnerability decile among block groups connected to a target CWS.
+all_block_groups_dashboard <- census_block |>
+    filter(!st_is_empty(geometry)) |>
     select(
         GEOID,
         NAME,
@@ -2137,11 +2140,24 @@ st_write(
     delete_dsn = TRUE,
     quiet = TRUE
 )
-st_write(
-    served_block_groups_dashboard,
-    file.path(dashboard_data_dir, "served_block_groups.geojson"),
-    delete_dsn = TRUE,
-    quiet = TRUE
+# Write one file per state so Streamlit loads only the selected state's block
+# groups rather than one large five-state GeoJSON payload.
+block_group_dashboard_dir <- file.path(dashboard_data_dir, "block_groups")
+dir.create(block_group_dashboard_dir, recursive = TRUE, showWarnings = FALSE)
+walk(
+    state_list,
+    function(state_abbr) {
+        st_write(
+            all_block_groups_dashboard |>
+                filter(state_po == state_abbr),
+            file.path(
+                block_group_dashboard_dir,
+                str_glue("{str_to_lower(state_abbr)}_block_groups.geojson")
+            ),
+            delete_dsn = TRUE,
+            quiet = TRUE
+        )
+    }
 )
 st_write(
     vulnerable_block_groups_dashboard,
@@ -2181,8 +2197,8 @@ if (requireNamespace("freestiler", quietly = TRUE)) {
                 min_zoom = 4,
                 max_zoom = 11
             ),
-            served_block_groups = freestiler::freestile_layer(
-                served_block_groups_dashboard,
+            all_block_groups = freestiler::freestile_layer(
+                all_block_groups_dashboard,
                 min_zoom = 5,
                 max_zoom = 11
             ),

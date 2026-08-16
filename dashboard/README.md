@@ -32,11 +32,18 @@ with `anymap-ts` or the MapLibre PMTiles protocol. Do not rely on Streamlit's
 built-in static-file server for production PMTiles delivery; `.pmtiles` is not
 one of its officially supported static media types.
 
+The archive is regenerated with the analysis pipeline and contains four named
+layers: `congressional_districts`, `cws_service_areas`, `all_block_groups`, and
+`vulnerable_block_groups`. Keep `data/water_infrastructure.pmtiles` with the
+deployment artifacts even while the Streamlit app uses state-split GeoJSON as
+its default, zero-infrastructure map source.
+
 ## Principal outputs
 
 - Congressional-district metrics and boundaries
 - CWS service areas clipped to congressional districts
-- CWS-served Census block groups
+- Complete Census block-group coverage, split into lightweight state files
+- CWS-served block groups in the district community tables
 - The most vulnerable 10% of served block groups
 - District-to-water-system lookup with compliance and component summaries
 

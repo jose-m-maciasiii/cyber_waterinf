@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import pydeck as pdk
@@ -41,6 +41,17 @@ st.markdown(
       .note { color:#617583; font-size:.88rem; }
       .source-box { background:#f5f7f8; border-left:4px solid #20a4a9;
                     padding:.8rem 1rem; border-radius:5px; }
+      .map-legend { display:flex; flex-wrap:wrap; gap:.45rem 1rem; align-items:center;
+                    margin:.55rem 0 .2rem; color:#496273; font-size:.82rem; }
+      .map-legend-title { color:#17324d; font-weight:700; margin-right:.1rem; }
+      .legend-item { display:inline-flex; align-items:center; gap:.35rem; }
+      .legend-swatch { display:inline-block; width:16px; height:12px; border-radius:2px; }
+      .legend-point { width:10px; height:10px; border-radius:50%; background:#cc202f;
+                      border:1px solid white; box-shadow:0 0 0 1px #9d1824; }
+      .legend-district { width:18px; height:10px; border:2px solid #142a3d;
+                         background:transparent; }
+      .legend-service { background:rgba(20,145,170,.35); border:2px solid #11708e; }
+      .legend-vulnerable { background:rgba(176,35,42,.72); border:1px solid #6c0f18; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -80,6 +91,21 @@ def district_feature(data: dict[str, Any], district_id: str) -> dict[str, Any]:
         for feature in data.get("features", [])
         if feature.get("properties", {}).get("congressional_district") == district_id
     ]
+    return {"type": "FeatureCollection", "features": features}
+
+
+def state_features(data: dict[str, Any], state_code: str) -> dict[str, Any]:
+    """Keep features assigned to any congressional district in a state."""
+    features = []
+    district_prefix = f"{state_code}-"
+    for feature in data.get("features", []):
+        properties = feature.get("properties", {})
+        district_value = str(properties.get("congressional_district", ""))
+        district_ids = [part.strip() for part in district_value.split("/")]
+        if properties.get("state_po") == state_code or any(
+            district_id.startswith(district_prefix) for district_id in district_ids
+        ):
+            features.append(feature)
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -133,6 +159,22 @@ def percent(value: Any, already_percent: bool = True) -> str:
     return f"{value:.1f}%"
 
 
+def source_label(value: Any) -> str:
+    """Expand EPA primary-source codes for public-facing labels."""
+    if pd.isna(value):
+        return "Not available"
+    code = str(value).upper()
+    labels = {
+        "GW": "Ground water (GW)",
+        "GWP": "Purchased ground water (GWP)",
+        "SW": "Surface water (SW)",
+        "SWP": "Purchased surface water (SWP)",
+        "GU": "Ground water under the influence of surface water (GU)",
+        "GUP": "Purchased ground water under the influence of surface water (GUP)",
+    }
+    return labels.get(code, code)
+
+
 def add_geojson_tooltips(
     data: dict[str, Any], layer_type: str
 ) -> dict[str, Any]:
@@ -181,12 +223,213 @@ def add_geojson_tooltips(
     return data
 
 
+def map_layers(
+    communities: dict[str, Any],
+    vulnerable: dict[str, Any],
+    district_boundaries: dict[str, Any],
+    service_areas: dict[str, Any],
+    water_systems: pd.DataFrame,
+    census_variable: Optional[str],
+    show_vulnerable: bool,
+) -> list[pdk.Layer]:
+    """Build map layers from bottom to top."""
+    census_fills = {
+        "Poverty rate": (
+            "properties.poverty_rate == null ? [180,180,180,55] : "
+            "properties.poverty_rate >= 30 ? [153,27,30,120] : "
+            "properties.poverty_rate >= 20 ? [230,85,13,105] : "
+            "properties.poverty_rate >= 10 ? [253,174,107,90] : "
+            "[255,237,160,75]"
+        ),
+        "Median household income": (
+            "properties.median_household_income == null ? [180,180,180,55] : "
+            "properties.median_household_income >= 90000 ? [8,81,156,120] : "
+            "properties.median_household_income >= 60000 ? [49,130,189,105] : "
+            "properties.median_household_income >= 40000 ? [107,174,214,90] : "
+            "[198,219,239,75]"
+        ),
+        "Rural population share": (
+            "properties.rural_share == null ? [180,180,180,55] : "
+            "properties.rural_share >= 1 ? [0,90,50,120] : "
+            "properties.rural_share >= 0.5 ? [49,163,84,105] : "
+            "properties.rural_share > 0 ? [161,217,155,90] : "
+            "[237,248,233,75]"
+        ),
+    }
+    layers: list[pdk.Layer] = []
+    if census_variable:
+        layers.append(
+            pdk.Layer(
+                "GeoJsonLayer",
+                communities,
+                id="served-communities",
+                pickable=True,
+                stroked=True,
+                filled=True,
+                get_fill_color=census_fills[census_variable],
+                get_line_color=[255, 255, 255, 110],
+                line_width_min_pixels=0.4,
+            )
+        )
+    if show_vulnerable:
+        layers.append(
+            pdk.Layer(
+                "GeoJsonLayer",
+                vulnerable,
+                id="vulnerable-communities",
+                pickable=True,
+                stroked=True,
+                filled=True,
+                get_fill_color=[176, 35, 42, 145],
+                get_line_color=[108, 15, 24, 225],
+                line_width_min_pixels=1.1,
+            )
+        )
+    layers.append(
+        pdk.Layer(
+            "GeoJsonLayer",
+            district_boundaries,
+            id="district-outline",
+            pickable=False,
+            stroked=True,
+            filled=False,
+            get_line_color=[20, 42, 61, 245],
+            line_width_min_pixels=3,
+        )
+    )
+    layers.append(
+        pdk.Layer(
+            "GeoJsonLayer",
+            service_areas,
+            id="service-areas",
+            pickable=True,
+            stroked=True,
+            filled=True,
+            get_fill_color=[20, 145, 170, 42],
+            get_line_color=[17, 112, 142, 185],
+            line_width_min_pixels=1.2,
+        )
+    )
+    point_data = water_systems.dropna(subset=["latitude", "longitude"]).copy()
+    if not point_data.empty:
+        point_data["tooltip_title"] = point_data["pws_name"].fillna("Water system")
+        point_data["tooltip_line_1"] = (
+            "<b>PWSID:</b> "
+            + point_data["pwsid"].fillna("Not available").astype(str)
+        )
+        point_data["tooltip_line_2"] = point_data["population_served_count"].map(
+            lambda value: f"<b>Population served:</b> {number(value)}"
+        )
+        point_data["tooltip_line_3"] = point_data["active_component_count"].map(
+            lambda value: f"<b>Active components:</b> {number(value)}"
+        )
+        point_data["tooltip_line_4"] = point_data["primary_source_code"].map(
+            lambda value: f"<b>Primary source:</b> {source_label(value)}"
+        )
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                point_data,
+                id="administrative-points",
+                get_position="[longitude, latitude]",
+                get_radius=90,
+                radius_min_pixels=3,
+                radius_max_pixels=8,
+                get_fill_color=[204, 32, 47, 220],
+                get_line_color=[255, 255, 255, 240],
+                line_width_min_pixels=1,
+                pickable=True,
+            )
+        )
+    return layers
+
+
+MAP_TOOLTIP = {
+    "html": (
+        "<b>{tooltip_title}</b><br/>"
+        "{tooltip_line_1}<br/>"
+        "{tooltip_line_2}<br/>"
+        "{tooltip_line_3}<br/>"
+        "{tooltip_line_4}"
+    ),
+    "style": {"backgroundColor": "#17324d", "color": "white"},
+}
+
+
+def show_selected_map_feature(map_event: Any) -> None:
+    """Show the most recently clicked feature below a map."""
+    selected_objects = map_event.selection.get("objects", {})
+    selected_object = next(
+        (records[-1] for records in selected_objects.values() if records),
+        None,
+    )
+    if selected_object:
+        selected_properties = selected_object.get("properties", selected_object)
+        detail_lines = "<br/>".join(
+            str(selected_properties.get(f"tooltip_line_{index}", ""))
+            for index in range(1, 5)
+            if selected_properties.get(f"tooltip_line_{index}")
+        )
+        st.markdown(
+            "<div class='source-box'><strong>Selected map feature</strong><br/>"
+            f"<strong>{selected_properties.get('tooltip_title', 'Map feature')}</strong>"
+            f"<br/>{detail_lines}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("Click a service area, block group, or point to keep its details visible.")
+
+
+def show_map_legend(
+    census_variable: Optional[str], show_vulnerable: bool
+) -> None:
+    """Render the shared state and district map legend."""
+    census_items = {
+        "Poverty rate": (
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(255,237,160,.75)"></span>Poverty &lt;10%</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(253,174,107,.8)"></span>10–&lt;20%</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(230,85,13,.75)"></span>20–&lt;30%</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(153,27,30,.8)"></span>30% or higher</span>'
+        ),
+        "Median household income": (
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(198,219,239,.75)"></span>Income &lt;$40K</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(107,174,214,.8)"></span>$40K–&lt;$60K</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(49,130,189,.75)"></span>$60K–&lt;$90K</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(8,81,156,.8)"></span>$90K or higher</span>'
+        ),
+        "Rural population share": (
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(237,248,233,.75)"></span>Fully urban</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(161,217,155,.8)"></span>Partly rural</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(49,163,84,.75)"></span>Majority rural</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(0,90,50,.8)"></span>Fully rural</span>'
+        ),
+    }.get(census_variable, "")
+    vulnerable_item = (
+        '<span class="legend-item"><span class="legend-swatch '
+        'legend-vulnerable"></span>Highest vulnerability decile</span>'
+        if show_vulnerable
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="map-legend" aria-label="Map legend">
+          <span class="map-legend-title">Legend</span>
+          {census_items}
+          {vulnerable_item}
+          <span class="legend-item"><span class="legend-swatch legend-service"></span>CWS service area</span>
+          <span class="legend-item"><span class="legend-district"></span>Congressional district</span>
+          <span class="legend-item"><span class="legend-point"></span>Administrative point</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 try:
     districts = load_csv("district_metrics.csv")
     systems = load_csv("district_water_systems.csv")
     district_geo = load_geojson("congressional_districts.geojson")
     service_geo = load_geojson("cws_service_areas.geojson")
-    communities_geo = load_geojson("served_block_groups.geojson")
     vulnerable_geo = load_geojson("vulnerable_block_groups.geojson")
 except FileNotFoundError as exc:
     st.error(
@@ -214,7 +457,7 @@ with st.sidebar:
     st.header("Pick a State & Voting District")
     available_states = sorted(districts["state_po"].dropna().unique().tolist())
     selected_state = st.selectbox(
-        "State",
+        "Step 1: State",
         available_states,
         index=None,
         placeholder="Select a state",
@@ -223,7 +466,7 @@ with st.sidebar:
     state_rows = state_rows.sort_values("district")
     district_options = state_rows["congressional_district"].tolist()
     selected_district = st.selectbox(
-        "Congressional district",
+        "Step 2: Congressional District",
         district_options,
         index=None,
         placeholder=(
@@ -232,24 +475,35 @@ with st.sidebar:
         disabled=selected_state is None,
     )
 
-    if selected_district:
+    if selected_state:
         st.divider()
-        st.subheader("Map layers")
-        show_service_areas = st.checkbox("CWS service areas", value=True)
-        show_communities = st.checkbox("Served block groups", value=True)
-        show_vulnerable = st.checkbox("Most vulnerable block groups", value=True)
-        show_points = st.checkbox("Geocoded administrative points", value=True)
+        show_vulnerable = st.checkbox("Most vulnerable block groups", value=False)
+        st.subheader("Optional Census Variables")
+        census_variable = st.selectbox(
+            "Color block groups by",
+            [
+                "Poverty rate",
+                "Median household income",
+                "Rural population share",
+            ],
+            index=None,
+            placeholder="Choose an optional Census variable",
+        )
 
     st.divider()
     st.caption(
-        "Analysis by Jose M. Macias III from Perhipery Analytics. Data is sourced from the U.S. EPA, US.Census Beaur ACS 5-year estimates."
+        "Analysis by Jose M. Macias III of Periphery Analytics. Data sources: "
+        "U.S. EPA SDWIS and U.S. Census Bureau American Community Survey "
+        "five-year estimates. Geocoded CWS administrative points are based on "
+        "contact addresses reported to EPA and may contain positional errors; "
+        "they do not necessarily represent physical infrastructure locations."
     )
 
 
-if not selected_state or not selected_district:
+if not selected_state:
     st.info(
-        "Start by selecting a state and congressional district from the sidebar. "
-        "The map and district profile will appear after both selections are made."
+        "Start by selecting a state from the sidebar. The statewide water-system "
+        "map will appear first; then select a congressional district for details."
     )
     blank_deck = pdk.Deck(
         layers=[],
@@ -262,6 +516,72 @@ if not selected_state or not selected_district:
         map_style=MAP_STYLE,
     )
     st.pydeck_chart(blank_deck, use_container_width=True, height=650)
+    st.stop()
+
+
+try:
+    communities_geo = load_geojson(
+        f"block_groups/{selected_state.lower()}_block_groups.geojson"
+    )
+except FileNotFoundError as exc:
+    st.error(
+        f"State block-group data are missing: {exc}. Run water_inf_analysis.R "
+        "through the dashboard export section."
+    )
+    st.stop()
+
+
+if not selected_district:
+    selected_state_districts = state_features(district_geo, selected_state)
+    selected_state_services = add_geojson_tooltips(
+        state_features(service_geo, selected_state), "service_area"
+    )
+    selected_state_communities = add_geojson_tooltips(
+        state_features(communities_geo, selected_state), "community"
+    )
+    selected_state_vulnerable = add_geojson_tooltips(
+        state_features(vulnerable_geo, selected_state), "community"
+    )
+    selected_state_systems = systems.loc[
+        systems["congressional_district"].fillna("").str.startswith(
+            f"{selected_state}-"
+        )
+    ].drop_duplicates(subset=["pwsid"])
+
+    st.subheader(f"{selected_state} statewide view")
+    st.info(
+        "Now select a congressional district from the sidebar to zoom in and "
+        "open its infrastructure and community profile."
+    )
+    state_layers = map_layers(
+        selected_state_communities,
+        selected_state_vulnerable,
+        selected_state_districts,
+        selected_state_services,
+        selected_state_systems,
+        census_variable,
+        show_vulnerable,
+    )
+    state_deck = pdk.Deck(
+        layers=state_layers,
+        initial_view_state=map_view(selected_state_districts),
+        map_style=MAP_STYLE,
+        tooltip=MAP_TOOLTIP,
+    )
+    state_map_event = st.pydeck_chart(
+        state_deck,
+        use_container_width=True,
+        height=650,
+        on_select="rerun",
+        selection_mode="single-object",
+        key=f"state-map-{selected_state}",
+    )
+    show_map_legend(census_variable, show_vulnerable)
+    st.caption(
+        "The statewide view shows all available districts and small-CWS data "
+        "for the selected state."
+    )
+    show_selected_map_feature(state_map_event)
     st.stop()
 
 
@@ -307,120 +627,20 @@ metric_cols[4].metric(
 map_col, context_col = st.columns([3.4, 1], gap="large")
 
 with map_col:
-    layers: list[pdk.Layer] = []
-    if show_communities:
-        layers.append(
-            pdk.Layer(
-                "GeoJsonLayer",
-                selected_communities_geo,
-                id="served-communities",
-                pickable=True,
-                stroked=True,
-                filled=True,
-                get_fill_color=(
-                    "properties.poverty_rate >= 30 ? [153,27,30,120] : "
-                    "properties.poverty_rate >= 20 ? [230,85,13,105] : "
-                    "properties.poverty_rate >= 10 ? [253,174,107,90] : [255,237,160,75]"
-                ),
-                get_line_color=[255, 255, 255, 110],
-                line_width_min_pixels=0.4,
-            )
-        )
-    if show_vulnerable:
-        layers.append(
-            pdk.Layer(
-                "GeoJsonLayer",
-                selected_vulnerable_geo,
-                id="vulnerable-communities",
-                pickable=True,
-                stroked=True,
-                filled=True,
-                get_fill_color=[176, 35, 42, 145],
-                get_line_color=[108, 15, 24, 225],
-                line_width_min_pixels=1.1,
-            )
-        )
-    # PyDeck draws later layers above earlier ones. Keep Census polygons at the
-    # bottom, the district outline above them, service areas next, and points
-    # at the very top.
-    layers.append(
-        pdk.Layer(
-            "GeoJsonLayer",
-            selected_district_geo,
-            id="district-outline",
-            pickable=False,
-            stroked=True,
-            filled=False,
-            get_line_color=[20, 42, 61, 245],
-            line_width_min_pixels=3,
-        )
+    layers = map_layers(
+        selected_communities_geo,
+        selected_vulnerable_geo,
+        selected_district_geo,
+        selected_service_geo,
+        selected_systems,
+        census_variable,
+        show_vulnerable,
     )
-    if show_service_areas:
-        layers.append(
-            pdk.Layer(
-                "GeoJsonLayer",
-                selected_service_geo,
-                id="service-areas",
-                pickable=True,
-                stroked=True,
-                filled=True,
-                get_fill_color=[20, 145, 170, 42],
-                get_line_color=[17, 112, 142, 185],
-                line_width_min_pixels=1.2,
-            )
-        )
-    if show_points:
-        point_data = selected_systems.dropna(
-            subset=["latitude", "longitude"]
-        ).copy()
-        point_data["tooltip_title"] = point_data["pws_name"].fillna("Water system")
-        point_data["tooltip_line_1"] = (
-            "<b>PWSID:</b> "
-            + point_data["pwsid"].fillna("Not available").astype(str)
-        )
-        point_data["tooltip_line_2"] = point_data["population_served_count"].map(
-            lambda value: f"<b>Population served:</b> {number(value)}"
-        )
-        point_data["tooltip_line_3"] = point_data["active_component_count"].map(
-            lambda value: f"<b>Active components:</b> {number(value)}"
-        )
-        point_data["tooltip_line_4"] = point_data["primary_source_code"].map(
-            lambda value: (
-                "<b>Primary source:</b> "
-                f"{'Not available' if pd.isna(value) else value}"
-            )
-        )
-        layers.append(
-            pdk.Layer(
-                "ScatterplotLayer",
-                point_data,
-                id="administrative-points",
-                get_position="[longitude, latitude]",
-                get_radius=90,
-                radius_min_pixels=3,
-                radius_max_pixels=8,
-                get_fill_color=[204, 32, 47, 220],
-                get_line_color=[255, 255, 255, 240],
-                line_width_min_pixels=1,
-                pickable=True,
-            )
-        )
-
-    tooltip = {
-        "html": (
-            "<b>{tooltip_title}</b><br/>"
-            "{tooltip_line_1}<br/>"
-            "{tooltip_line_2}<br/>"
-            "{tooltip_line_3}<br/>"
-            "{tooltip_line_4}"
-        ),
-        "style": {"backgroundColor": "#17324d", "color": "white"},
-    }
     deck = pdk.Deck(
         layers=layers,
         initial_view_state=map_view(selected_district_geo),
         map_style=MAP_STYLE,
-        tooltip=tooltip,
+        tooltip=MAP_TOOLTIP,
     )
     map_event = st.pydeck_chart(
         deck,
@@ -430,34 +650,18 @@ with map_col:
         selection_mode="single-object",
         key=f"district-map-{selected_district}",
     )
-    st.caption(
-        "Blue outlines show EPA service areas; shaded Census block groups are "
-        "colored by poverty rate; dark red identifies the study's most vulnerable 10%."
-    )
-    selected_objects = map_event.selection.get("objects", {})
-    selected_object = next(
-        (
-            records[-1]
-            for records in selected_objects.values()
-            if records
-        ),
-        None,
-    )
-    if selected_object:
-        selected_properties = selected_object.get("properties", selected_object)
-        detail_lines = "<br/>".join(
-            str(selected_properties.get(f"tooltip_line_{index}", ""))
-            for index in range(1, 5)
-            if selected_properties.get(f"tooltip_line_{index}")
-        )
-        st.markdown(
-            "<div class='source-box'><strong>Selected map feature</strong><br/>"
-            f"<strong>{selected_properties.get('tooltip_title', 'Map feature')}</strong>"
-            f"<br/>{detail_lines}</div>",
-            unsafe_allow_html=True,
+    show_map_legend(census_variable, show_vulnerable)
+    if census_variable:
+        st.caption(
+            f"Census block groups are colored by {census_variable.lower()}. "
+            "Blue outlines show EPA service areas."
         )
     else:
-        st.caption("Click a service area, block group, or point to keep its details visible.")
+        st.caption(
+            "No Census shading is active. Choose an optional Census variable "
+            "in the sidebar; blue outlines show EPA service areas."
+        )
+    show_selected_map_feature(map_event)
 
 with context_col:
     st.markdown("### About the District")
@@ -533,7 +737,15 @@ with systems_tab:
     )
 
 with communities_tab:
-    community_rows = [feature.get("properties", {}) for feature in selected_communities_geo["features"]]
+    community_rows = [
+        feature.get("properties", {})
+        for feature in selected_communities_geo["features"]
+        if pd.to_numeric(
+            feature.get("properties", {}).get("cws_service_area_count"),
+            errors="coerce",
+        )
+        > 0
+    ]
     communities = pd.DataFrame(community_rows)
     if communities.empty:
         st.info("No block-group crosswalk records are available for this district.")
@@ -590,5 +802,5 @@ with methods_tab:
 st.divider()
 st.caption(
     "Sources: U.S. EPA SDWIS, EPA Community Water System Service Areas v3.0, "
-    "U.S. Census Bureau ACS 2020–2024 and 2020 DHC, and 2024 U.S. House election returns."
+    "U.S. Census Bureau ACS 2020–2024 and 2020 DHC, and MIT Election Lab, 2024 U.S. House election returns."
 )
