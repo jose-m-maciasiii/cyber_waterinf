@@ -593,7 +593,7 @@ st.markdown(
       <p>Explore community water systems serving 3,300 people or fewer and the
       communities within their EPA service areas. Search by congressional district
       or county to connect water infrastructure, community conditions, and political
-      representation.</p>
+      representation. Includes data on 5 states recently targeted by Iranian hackers.</p>
     </div>
     """,
     unsafe_allow_html=True,
