@@ -160,22 +160,38 @@ def load_geojson(filename: str) -> dict[str, Any]:
         return json.load(handle)
 
 
-def subset_geojson(data: dict[str, Any], district_id: str) -> dict[str, Any]:
-    """Keep features assigned to or clipped to the selected district."""
+def subset_geojson(
+    data: dict[str, Any], geography_id: str, property_name: str
+) -> dict[str, Any]:
+    """Keep features assigned to or clipped to a selected geography."""
     features = []
     for feature in data.get("features", []):
-        value = str(feature.get("properties", {}).get("congressional_district", ""))
-        if district_id in [part.strip() for part in value.split("/")]:
+        value = str(feature.get("properties", {}).get(property_name, ""))
+        if geography_id in [part.strip() for part in value.split("/")]:
             features.append(feature)
     return {"type": "FeatureCollection", "features": features}
 
 
-def district_feature(data: dict[str, Any], district_id: str) -> dict[str, Any]:
+def geography_feature(
+    data: dict[str, Any], geography_id: str, property_name: str
+) -> dict[str, Any]:
     features = [
         feature
         for feature in data.get("features", [])
-        if feature.get("properties", {}).get("congressional_district") == district_id
+        if str(feature.get("properties", {}).get(property_name)) == geography_id
     ]
+    return {"type": "FeatureCollection", "features": features}
+
+
+def ids_features(
+    data: dict[str, Any], geography_ids: set[str], property_name: str
+) -> dict[str, Any]:
+    """Keep features assigned to any identifier in a selected state."""
+    features = []
+    for feature in data.get("features", []):
+        value = str(feature.get("properties", {}).get(property_name, ""))
+        if any(part.strip() in geography_ids for part in value.split("/")):
+            features.append(feature)
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -302,7 +318,7 @@ def add_geojson_tooltips(
 def map_layers(
     communities: dict[str, Any],
     vulnerable: dict[str, Any],
-    district_boundaries: dict[str, Any],
+    geography_boundaries: dict[str, Any],
     service_areas: dict[str, Any],
     water_systems: pd.DataFrame,
     census_variable: Optional[str],
@@ -364,8 +380,8 @@ def map_layers(
     layers.append(
         pdk.Layer(
             "GeoJsonLayer",
-            district_boundaries,
-            id="district-outline",
+            geography_boundaries,
+            id="geography-outline",
             pickable=False,
             stroked=True,
             filled=False,
@@ -463,9 +479,9 @@ def show_selected_map_feature(map_event: Any) -> None:
 
 
 def show_map_legend(
-    census_variable: Optional[str], show_vulnerable: bool
+    census_variable: Optional[str], show_vulnerable: bool, boundary_label: str
 ) -> None:
-    """Render the shared state and district map legend."""
+    """Render the shared state and selected-geography map legend."""
     census_items = {
         "Poverty rate": (
             '<span class="legend-item"><span class="legend-swatch" style="background:rgba(255,237,160,.75)"></span>Poverty &lt;10%</span>'
@@ -499,7 +515,7 @@ def show_map_legend(
           {census_items}
           {vulnerable_item}
           <span class="legend-item"><span class="legend-swatch legend-service"></span>Vulnerable CWS service area</span>
-          <span class="legend-item"><span class="legend-district"></span>Congressional District </span>
+          <span class="legend-item"><span class="legend-district"></span>{boundary_label}</span>
           <span class="legend-item"><span class="legend-point"></span>CWS Administration Address</span>
         </div>
         """,
@@ -535,7 +551,15 @@ try:
     systems = load_csv("district_water_systems.csv")
     district_geo = load_geojson("congressional_districts.geojson")
     service_geo = load_geojson("cws_service_areas.geojson")
+    counties = load_csv("county_metrics.csv")
+    county_systems = load_csv("county_water_systems.csv")
+    county_geo = load_geojson("counties.geojson")
+    county_service_geo = load_geojson("county_cws_service_areas.geojson")
     vulnerable_geo = load_geojson("vulnerable_block_groups.geojson")
+    counties["county_geoid"] = counties["county_geoid"].astype(str).str.zfill(5)
+    county_systems["county_geoid"] = (
+        county_systems["county_geoid"].astype(str).str.zfill(5)
+    )
 except FileNotFoundError as exc:
     st.error(
         f"Dashboard data are missing: {exc}. Run water_inf_analysis.R through "
@@ -551,7 +575,8 @@ st.markdown(
       <h1>Small Water Systems Explorer</h1>
       <p>Explore community water systems serving 3,300 people or fewer and the
       communities within their EPA service areas. Search by congressional district
-      to connect water infrastructure, community conditions, and representation.</p>
+      or county to connect water infrastructure, community conditions, and political
+      representation.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -559,7 +584,7 @@ st.markdown(
 
 
 with st.sidebar:
-    st.header("Pick a State & Voting District")
+    st.header("Choose an Area")
     available_states = sorted(districts["state_po"].dropna().unique().tolist())
     selected_state = st.selectbox(
         "Step 1: State",
@@ -567,18 +592,37 @@ with st.sidebar:
         index=None,
         placeholder="Select a state",
     )
-    state_rows = districts[districts["state_po"] == selected_state].copy()
-    state_rows = state_rows.sort_values("district")
-    district_options = state_rows["congressional_district"].tolist()
-    selected_district = st.selectbox(
-        "Step 2: Congressional District",
-        district_options,
-        index=None,
-        placeholder=(
-            "Select a district" if selected_state else "Select a state first"
-        ),
+    analysis_level = st.radio(
+        "Step 2: Analysis level",
+        ["Congressional district", "County"],
+        horizontal=True,
         disabled=selected_state is None,
     )
+    if analysis_level == "Congressional district":
+        state_rows = districts[districts["state_po"] == selected_state].copy()
+        state_rows = state_rows.sort_values("district")
+        area_options = state_rows["congressional_district"].tolist()
+        area_labels = {value: value for value in area_options}
+    else:
+        state_rows = counties[counties["state_po"] == selected_state].copy()
+        state_rows = state_rows.sort_values("county_name")
+        area_options = state_rows["county_geoid"].astype(str).str.zfill(5).tolist()
+        area_labels = dict(zip(area_options, state_rows["county_name"]))
+    selected_area = st.selectbox(
+        f"Select a {analysis_level.lower()}",
+        area_options,
+        index=None,
+        placeholder=(
+            f"Select a {analysis_level.lower()}"
+            if selected_state else "Select a state first"
+        ),
+        disabled=selected_state is None,
+        format_func=lambda value: area_labels.get(value, value),
+    )
+    selected_district = (
+        selected_area if analysis_level == "Congressional district" else None
+    )
+    selected_county = selected_area if analysis_level == "County" else None
 
     if selected_state:
         st.divider()
@@ -635,7 +679,7 @@ if not selected_state:
         """
         <div class="instruction"><span class="step-dot">1</span><span>
         Select a state in the sidebar to open its statewide water-system map.
-        You can then choose a congressional district for a closer look.</span></div>
+        You can then choose either a congressional district or county.</span></div>
         """,
         unsafe_allow_html=True,
     )
@@ -666,10 +710,30 @@ except FileNotFoundError as exc:
     st.stop()
 
 
-if not selected_district:
-    selected_state_districts = state_features(district_geo, selected_state)
+if not selected_area:
+    geography_property = (
+        "congressional_district"
+        if analysis_level == "Congressional district"
+        else "county_geoid"
+    )
+    active_boundaries = (
+        district_geo if analysis_level == "Congressional district" else county_geo
+    )
+    active_services = (
+        service_geo
+        if analysis_level == "Congressional district"
+        else county_service_geo
+    )
+    active_systems = (
+        systems if analysis_level == "Congressional district" else county_systems
+    )
+    state_ids = set(area_options)
+    selected_state_boundaries = ids_features(
+        active_boundaries, state_ids, geography_property
+    )
     selected_state_services = add_geojson_tooltips(
-        state_features(service_geo, selected_state), "service_area"
+        ids_features(active_services, state_ids, geography_property),
+        "service_area",
     )
     selected_state_communities = add_geojson_tooltips(
         state_features(communities_geo, selected_state), "community"
@@ -677,10 +741,11 @@ if not selected_district:
     selected_state_vulnerable = add_geojson_tooltips(
         state_features(vulnerable_geo, selected_state), "community"
     )
-    selected_state_systems = systems.loc[
-        systems["congressional_district"].fillna("").str.startswith(
-            f"{selected_state}-"
-        )
+    system_ids = active_systems[geography_property].astype(str)
+    if geography_property == "county_geoid":
+        system_ids = system_ids.str.zfill(5)
+    selected_state_systems = active_systems.loc[
+        system_ids.isin(state_ids)
     ].drop_duplicates(subset=["pwsid"])
 
     st.markdown(
@@ -691,15 +756,15 @@ if not selected_district:
     st.markdown(
         """
         <div class="instruction"><span class="step-dot">2</span><span>
-        Select a congressional district in the sidebar to open its infrastructure
-        and community profile.</span></div>
+        Choose an analysis level and select an area in the sidebar to open its
+        infrastructure and community profile.</span></div>
         """,
         unsafe_allow_html=True,
     )
     state_layers = map_layers(
         selected_state_communities,
         selected_state_vulnerable,
-        selected_state_districts,
+        selected_state_boundaries,
         selected_state_services,
         selected_state_systems,
         census_variable,
@@ -707,24 +772,251 @@ if not selected_district:
     )
     state_deck = pdk.Deck(
         layers=state_layers,
-        initial_view_state=map_view(selected_state_districts),
+        initial_view_state=map_view(selected_state_boundaries),
         map_style=MAP_STYLE,
         tooltip=MAP_TOOLTIP,
     )
-    show_map_legend(census_variable, show_vulnerable)
+    show_map_legend(census_variable, show_vulnerable, analysis_level.title())
     state_map_event = st.pydeck_chart(
         state_deck,
         use_container_width=True,
         height=650,
         on_select="rerun",
         selection_mode="single-object",
-        key=f"state-map-{selected_state}",
+        key=f"state-map-{selected_state}-{analysis_level}",
     )
     st.caption(
-        "The statewide view shows all available districts and small-CWS data "
-        "for the selected state."
+        f"The statewide view shows all available {analysis_level.lower()} "
+        "boundaries and small-CWS data for the selected state."
     )
     show_selected_map_feature(state_map_event)
+    show_footer()
+    st.stop()
+
+
+if selected_county:
+    county_row = counties.loc[counties["county_geoid"] == selected_county].iloc[0]
+    selected_systems = county_systems.loc[
+        county_systems["county_geoid"] == selected_county
+    ].drop_duplicates(subset=["pwsid"])
+    selected_boundary_geo = geography_feature(
+        county_geo, selected_county, "county_geoid"
+    )
+    selected_service_geo = subset_geojson(
+        county_service_geo, selected_county, "county_geoid"
+    )
+    selected_communities_geo = subset_geojson(
+        communities_geo, selected_county, "county_geoid"
+    )
+    selected_vulnerable_geo = subset_geojson(
+        vulnerable_geo, selected_county, "county_geoid"
+    )
+    selected_service_geo = add_geojson_tooltips(selected_service_geo, "service_area")
+    selected_communities_geo = add_geojson_tooltips(
+        selected_communities_geo, "community"
+    )
+    selected_vulnerable_geo = add_geojson_tooltips(
+        selected_vulnerable_geo, "community"
+    )
+
+    st.markdown(
+        f"""
+        <div class="district-heading">
+          <div>
+            <div class="eyebrow">County profile</div>
+            <h2>{county_row['county_name']}, {selected_state}</h2>
+          </div>
+          <div class="district-meta">
+            Congressional districts&nbsp; <strong>{county_row['congressional_districts']}</strong><br>
+            Representatives&nbsp; <strong>{county_row['elected_representatives']}</strong>&nbsp;
+            <span class="party-tag">{str(county_row['representative_parties']).title()}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric(
+        "CWS outside AWIA threshold",
+        number(county_row["cws_service_area_count"]),
+    )
+    metric_cols[1].metric(
+        "Estimated population served",
+        number(county_row["estimated_cws_service_population"]),
+    )
+    metric_cols[2].metric(
+        "Most disadvantaged block groups",
+        number(county_row["vulnerable_block_group_count"]),
+    )
+    metric_cols[3].metric(
+        "Active water components", number(county_row["cws_component_count"])
+    )
+    metric_cols[4].metric(
+        "Service-area coverage",
+        f"{number(county_row['cws_service_area_sq_km'])} km²",
+    )
+
+    map_col, context_col = st.columns([3.4, 1], gap="large")
+    with map_col:
+        layers = map_layers(
+            selected_communities_geo,
+            selected_vulnerable_geo,
+            selected_boundary_geo,
+            selected_service_geo,
+            selected_systems,
+            census_variable,
+            show_vulnerable,
+        )
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=map_view(selected_boundary_geo),
+            map_style=MAP_STYLE,
+            tooltip=MAP_TOOLTIP,
+        )
+        show_map_legend(census_variable, show_vulnerable, "County")
+        map_event = st.pydeck_chart(
+            deck,
+            use_container_width=True,
+            height=650,
+            on_select="rerun",
+            selection_mode="single-object",
+            key=f"county-map-{selected_county}",
+        )
+        st.caption(
+            "County boundaries organize the profile; service areas and block "
+            "groups remain the underlying EPA and Census geographies."
+        )
+        show_selected_map_feature(map_event)
+
+    with context_col:
+        st.markdown("### About the County")
+        st.metric("County population", number(county_row["total_population"]))
+        st.metric(
+            "County median household income",
+            money(county_row["median_household_income"]),
+        )
+        st.metric("County poverty rate", percent(county_row["poverty_rate"]))
+        st.metric(
+            "Rural population share",
+            percent(county_row["county_rural_share"], False),
+        )
+
+    overview_tab, systems_tab, communities_tab, methods_tab = st.tabs(
+        ["Overview", "Water systems", "Communities", "Methods & limitations"]
+    )
+    with overview_tab:
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Estimated households served",
+            number(county_row["estimated_cws_service_households"]),
+        )
+        c2.metric(
+            "Systems with unresolved violations",
+            number((selected_systems["unresolved_violation_count"].fillna(0) > 0).sum()),
+        )
+        c3.metric(
+            "Site inspections recorded",
+            number(selected_systems["site_inspection_count"].fillna(0).sum()),
+        )
+        st.markdown(
+            "This county view lists every congressional district and elected "
+            "representative whose district overlaps the county."
+        )
+
+    with systems_tab:
+        st.markdown(f"### {len(selected_systems):,} systems intersect this county")
+        search = st.text_input(
+            "Search system name or PWSID",
+            placeholder="Type a name or identifier",
+            key="county-system-search",
+        )
+        system_table = selected_systems.copy()
+        if search:
+            mask = (
+                system_table["pws_name"].fillna("").str.contains(search, case=False, regex=False)
+                | system_table["pwsid"].fillna("").str.contains(search, case=False, regex=False)
+            )
+            system_table = system_table.loc[mask]
+        display_columns = {
+            "pws_name": "Water system",
+            "pwsid": "PWSID",
+            "population_served_count": "Population served",
+            "primary_source_code": "Source",
+            "active_component_count": "Components",
+            "violation_count": "Violations",
+            "unresolved_violation_count": "Unresolved",
+            "health_based_violation_count": "Health-based",
+            "site_inspection_count": "Inspections",
+        }
+        st.dataframe(
+            system_table[list(display_columns)].rename(columns=display_columns),
+            hide_index=True,
+            width="stretch",
+            height=410,
+        )
+        st.download_button(
+            "Download county water systems (CSV)",
+            system_table.to_csv(index=False).encode("utf-8"),
+            file_name=f"{selected_county}_small_cws.csv",
+            mime="text/csv",
+        )
+
+    with communities_tab:
+        community_rows = [
+            feature.get("properties", {})
+            for feature in selected_communities_geo["features"]
+            if pd.to_numeric(
+                feature.get("properties", {}).get("cws_service_area_count"),
+                errors="coerce",
+            ) > 0
+        ]
+        communities = pd.DataFrame(community_rows)
+        if communities.empty:
+            st.info("No block-group crosswalk records are available for this county.")
+        else:
+            st.markdown(f"### {len(communities):,} served Census block groups")
+            columns = {
+                "NAME": "Community",
+                "GEOID": "Block group GEOID",
+                "poverty_rate": "Poverty rate (%)",
+                "median_household_income": "Median household income",
+                "rural_status": "Rural status",
+                "cws_service_area_count": "CWS",
+                "estimated_cws_service_population": "Estimated population served",
+            }
+            available = [column for column in columns if column in communities.columns]
+            st.dataframe(
+                communities[available].rename(columns=columns).sort_values(
+                    "Poverty rate (%)", ascending=False
+                ),
+                hide_index=True,
+                width="stretch",
+                height=410,
+            )
+            st.download_button(
+                "Download county communities (CSV)",
+                communities.to_csv(index=False).encode("utf-8"),
+                file_name=f"{selected_county}_served_block_groups.csv",
+                mime="text/csv",
+            )
+
+    with methods_tab:
+        st.markdown(
+            """
+            ### How to read the county analysis
+
+            - County demographics are 2020–2024 ACS five-year estimates.
+            - Rural population is aggregated from 2020 DHC block-group counts.
+            - Water systems and service-area coverage use positive EPA polygon
+              intersections with the county boundary.
+            - Representatives are included when their congressional district has
+              a positive-area overlap with the county; some counties therefore
+              have multiple representatives and parties.
+            - Administrative points are reported contact addresses and may not
+              represent infrastructure locations.
+            """
+        )
     show_footer()
     st.stop()
 
@@ -737,10 +1029,18 @@ selected_systems = systems.loc[
 ].copy()
 selected_systems = selected_systems.drop_duplicates(subset=["pwsid"])
 
-selected_district_geo = district_feature(district_geo, selected_district)
-selected_service_geo = subset_geojson(service_geo, selected_district)
-selected_communities_geo = subset_geojson(communities_geo, selected_district)
-selected_vulnerable_geo = subset_geojson(vulnerable_geo, selected_district)
+selected_district_geo = geography_feature(
+    district_geo, selected_district, "congressional_district"
+)
+selected_service_geo = subset_geojson(
+    service_geo, selected_district, "congressional_district"
+)
+selected_communities_geo = subset_geojson(
+    communities_geo, selected_district, "congressional_district"
+)
+selected_vulnerable_geo = subset_geojson(
+    vulnerable_geo, selected_district, "congressional_district"
+)
 selected_service_geo = add_geojson_tooltips(selected_service_geo, "service_area")
 selected_communities_geo = add_geojson_tooltips(selected_communities_geo, "community")
 selected_vulnerable_geo = add_geojson_tooltips(selected_vulnerable_geo, "community")
@@ -800,7 +1100,7 @@ with map_col:
         map_style=MAP_STYLE,
         tooltip=MAP_TOOLTIP,
     )
-    show_map_legend(census_variable, show_vulnerable)
+    show_map_legend(census_variable, show_vulnerable, "Congressional District")
     map_event = st.pydeck_chart(
         deck,
         use_container_width=True,

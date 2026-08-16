@@ -166,6 +166,7 @@ glimpse(water_pub)
 #   rural population share and a block-group rural-status marker.
 # ACS measures are estimates; the derived rates use their corresponding ACS
 # universes as denominators. Urban/rural classification is updated decennially.
+# source i used to help https://censusreporter.org/topics/employment/
 census_variables <- c(
     total_population = "B01003_001",
     total_households = "B11001_001",
@@ -228,6 +229,40 @@ census <- get_acs(
                 )
             )
         ),
+        total_population = total_populationE,
+        total_households = total_householdsE,
+        median_household_income = median_household_incomeE,
+        civilian_labor_force = civilian_labor_forceE,
+        employed_population = employed_populationE,
+        unemployed_population = unemployed_populationE,
+        unemployment_rate = 100 * unemployed_population / civilian_labor_force,
+        poverty_universe = poverty_universeE,
+        population_below_poverty = population_below_povertyE,
+        poverty_rate = 100 * population_below_poverty / poverty_universe,
+        internet_households = internet_householdsE,
+        broadband_households = broadband_householdsE,
+        broadband_rate = 100 * broadband_households / internet_households
+    ) |>
+    select(-all_of(acs_estimate_columns))
+
+# County-level ACS measures provide a second public-facing geography alongside
+# congressional districts. `county_geoid` is the stable five-digit state/county
+# FIPS identifier used throughout the county analysis and dashboard exports.
+census_county <- get_acs(
+    geography = "county",
+    variables = census_variables,
+    state = state_list,
+    year = 2024,
+    survey = "acs5",
+    output = "wide",
+    geometry = TRUE
+) |>
+    mutate(
+        county_geoid = GEOID,
+        state_fips = str_sub(GEOID, 1, 2),
+        state = str_extract(NAME, "(?<=, )[^,]+$"),
+        state_po = state.abb[match(state, state.name)],
+        county_name = str_remove(NAME, ", [^,]+$"),
         total_population = total_populationE,
         total_households = total_householdsE,
         median_household_income = median_household_incomeE,
@@ -340,6 +375,47 @@ census_block <- census_block |>
     left_join(
         rural_block_groups |> select(-NAME),
         by = "GEOID",
+        relationship = "one-to-one"
+    ) |>
+    mutate(county_geoid = str_sub(GEOID, 1, 5)) |>
+    left_join(
+        census_county |>
+            st_drop_geometry() |>
+            select(county_geoid, county_name),
+        by = "county_geoid",
+        relationship = "many-to-one"
+    )
+
+# Aggregate the block-group DHC urban/rural counts to counties. Census block
+# groups nest within counties, so this avoids population allocation assumptions.
+county_rural_summary <- rural_block_groups |>
+    mutate(county_geoid = str_sub(GEOID, 1, 5)) |>
+    group_by(county_geoid) |>
+    summarise(
+        county_decennial_population = sum(decennial_population, na.rm = TRUE),
+        county_urban_population = sum(urban_population, na.rm = TRUE),
+        county_rural_population = sum(rural_population, na.rm = TRUE),
+        county_rural_share = if_else(
+            county_decennial_population > 0,
+            county_rural_population / county_decennial_population,
+            NA_real_
+        ),
+        county_rural_status = case_when(
+            county_decennial_population == 0 ~ "No population",
+            county_rural_share == 1 ~ "Fully rural",
+            county_rural_share >= 0.5 ~ "Majority rural",
+            county_rural_share > 0 ~ "Partly rural",
+            county_rural_share == 0 ~ "Fully urban",
+            TRUE ~ NA_character_
+        ),
+        block_group_count = n_distinct(GEOID),
+        .groups = "drop"
+    )
+
+census_county <- census_county |>
+    left_join(
+        county_rural_summary,
+        by = "county_geoid",
         relationship = "one-to-one"
     )
 
@@ -649,6 +725,51 @@ target_districts_2024 <- target_districts_2024 |>
     left_join(
         district_rural_summary,
         by = "congressional_district",
+        relationship = "one-to-one"
+    )
+
+######################## County Analysis ########################
+
+# A county may overlap multiple congressional districts. Retain every positive
+# area overlap and summarize all elected representatives and parties rather
+# than assigning the county to a single politician.
+county_district_overlaps <- suppressWarnings(
+    st_intersection(
+        census_county |>
+            select(county_geoid) |>
+            st_make_valid() |>
+            st_transform(5070),
+        target_districts_2024 |>
+            select(
+                congressional_district,
+                candidate,
+                party
+            ) |>
+            st_make_valid() |>
+            st_transform(5070)
+    )
+) |>
+    mutate(overlap_area_sq_km = as.numeric(st_area(geometry)) / 1e6) |>
+    st_drop_geometry() |>
+    filter(overlap_area_sq_km > 1e-6)
+
+county_representation_summary <- county_district_overlaps |>
+    arrange(county_geoid, desc(overlap_area_sq_km)) |>
+    group_by(county_geoid) |>
+    summarise(
+        congressional_district_count = n_distinct(congressional_district),
+        congressional_districts = str_c(
+            unique(congressional_district), collapse = " / "
+        ),
+        elected_representatives = str_c(unique(candidate), collapse = " / "),
+        representative_parties = str_c(unique(party), collapse = " / "),
+        .groups = "drop"
+    )
+
+target_counties_2024 <- census_county |>
+    left_join(
+        county_representation_summary,
+        by = "county_geoid",
         relationship = "one-to-one"
     )
 
@@ -1363,6 +1484,157 @@ target_districts_2024 <- target_districts_2024 |>
         )
     )
 
+# Parallel county-level infrastructure summaries. Service polygons are clipped
+# to county boundaries for counts and area, while EPA's building-weighted tract
+# crosswalk supplies population, household, and income estimates.
+service_county_intersections <- suppressWarnings(
+    st_intersection(
+        target_service_areas |>
+            select(pwsid) |>
+            st_make_valid() |>
+            st_transform(5070),
+        target_counties_2024 |>
+            select(county_geoid) |>
+            st_make_valid() |>
+            st_transform(5070)
+    )
+)
+
+service_county_intersections <- service_county_intersections |>
+    mutate(
+        intersection_area_sq_km = as.numeric(
+            st_area(service_county_intersections)
+        ) / 1e6
+    ) |>
+    filter(intersection_area_sq_km > 1e-6)
+
+county_service_area_geometry_summary <- service_county_intersections |>
+    group_by(county_geoid) |>
+    summarise(
+        cws_service_area_count = n_distinct(pwsid),
+        cws_service_area_sq_km_gross = sum(intersection_area_sq_km),
+        .groups = "drop"
+    )
+
+county_service_area_geometry_summary <-
+    county_service_area_geometry_summary |>
+    mutate(
+        cws_service_area_sq_km = as.numeric(
+            st_area(county_service_area_geometry_summary)
+        ) / 1e6
+    ) |>
+    st_drop_geometry()
+
+county_component_summary <- service_county_intersections |>
+    st_drop_geometry() |>
+    distinct(county_geoid, pwsid) |>
+    left_join(
+        water_pub |> select(pwsid, active_component_count),
+        by = "pwsid",
+        relationship = "many-to-one"
+    ) |>
+    group_by(county_geoid) |>
+    summarise(
+        cws_component_count = sum(active_component_count, na.rm = TRUE),
+        .groups = "drop"
+    )
+
+county_service_population_by_tract <- service_area_tract_crosswalk |>
+    mutate(county_geoid = str_sub(tract_geoid, 1, 5)) |>
+    group_by(county_geoid, tract_geoid) |>
+    summarise(
+        service_population_gross = sum(pop20_bw, na.rm = TRUE),
+        service_population = pmin(
+            service_population_gross,
+            first(tract_2020_population)
+        ),
+        service_households_gross = sum(
+            estimated_households_served_gross,
+            na.rm = TRUE
+        ),
+        service_households = pmin(
+            service_households_gross,
+            first(tract_2024_households)
+        ),
+        tract_median_household_income = first(
+            tract_median_household_income
+        ),
+        .groups = "drop"
+    )
+
+county_service_population_summary <- county_service_population_by_tract |>
+    group_by(county_geoid) |>
+    summarise(
+        estimated_cws_service_population_gross = round(
+            sum(service_population_gross, na.rm = TRUE)
+        ),
+        estimated_cws_service_population = round(
+            sum(service_population, na.rm = TRUE)
+        ),
+        estimated_cws_service_households_gross = round(
+            sum(service_households_gross, na.rm = TRUE)
+        ),
+        estimated_cws_service_households = round(
+            sum(service_households, na.rm = TRUE)
+        ),
+        estimated_service_area_median_household_income = weighted.mean(
+            tract_median_household_income,
+            service_households,
+            na.rm = TRUE
+        ),
+        .groups = "drop"
+    )
+
+cws_county_membership <- cws_water_system_points |>
+    st_join(
+        target_counties_2024 |> select(county_geoid),
+        join = st_within,
+        left = TRUE
+    )
+
+cws_county_counts <- cws_county_membership |>
+    st_drop_geometry() |>
+    filter(!is.na(county_geoid)) |>
+    count(county_geoid, name = "cws_water_system_count")
+
+target_counties_2024 <- target_counties_2024 |>
+    left_join(
+        cws_county_counts,
+        by = "county_geoid",
+        relationship = "one-to-one"
+    ) |>
+    left_join(
+        county_service_area_geometry_summary,
+        by = "county_geoid",
+        relationship = "one-to-one"
+    ) |>
+    left_join(
+        county_component_summary,
+        by = "county_geoid",
+        relationship = "one-to-one"
+    ) |>
+    left_join(
+        county_service_population_summary,
+        by = "county_geoid",
+        relationship = "one-to-one"
+    ) |>
+    mutate(
+        across(
+            c(
+                cws_water_system_count,
+                cws_service_area_count,
+                cws_component_count,
+                cws_service_area_sq_km_gross,
+                cws_service_area_sq_km,
+                estimated_cws_service_population_gross,
+                estimated_cws_service_population,
+                estimated_cws_service_households_gross,
+                estimated_cws_service_households
+            ),
+            ~ replace_na(.x, 0)
+        )
+    )
+
 ######################## Census Tract Analysis ########################
 
 # Assign each geocoded CWS administrative address to a Census tract and count
@@ -1963,6 +2235,50 @@ vulnerability_analysis_text <- vulnerable_block_group_summary |>
     ) |>
     pull(text)
 
+# Attach the disadvantaged-community counts to both selectable analysis
+# geographies. A split block group contributes to every intersecting district;
+# each block group belongs to exactly one county.
+district_vulnerability_summary <- block_group_district_overlaps |>
+    semi_join(
+        most_vulnerable_cws_block_groups |>
+            st_drop_geometry() |>
+            select(GEOID),
+        by = "GEOID"
+    ) |>
+    group_by(congressional_district) |>
+    summarise(
+        vulnerable_block_group_count = n_distinct(GEOID),
+        .groups = "drop"
+    )
+
+county_vulnerability_summary <- most_vulnerable_cws_block_groups |>
+    st_drop_geometry() |>
+    count(county_geoid, name = "vulnerable_block_group_count")
+
+target_districts_2024 <- target_districts_2024 |>
+    left_join(
+        district_vulnerability_summary,
+        by = "congressional_district",
+        relationship = "one-to-one"
+    ) |>
+    mutate(
+        vulnerable_block_group_count = replace_na(
+            vulnerable_block_group_count, 0L
+        )
+    )
+
+target_counties_2024 <- target_counties_2024 |>
+    left_join(
+        county_vulnerability_summary,
+        by = "county_geoid",
+        relationship = "one-to-one"
+    ) |>
+    mutate(
+        vulnerable_block_group_count = replace_na(
+            vulnerable_block_group_count, 0L
+        )
+    )
+
 # Save reusable spatial and tabular layers for later mapping and analysis.
 analysis_output_dir <- "data/analysis"
 dir.create(analysis_output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -2023,9 +2339,35 @@ district_dashboard <- target_districts_2024 |>
         cws_service_area_sq_km,
         estimated_cws_service_population,
         estimated_cws_service_households,
-        estimated_service_area_median_household_income
+        estimated_service_area_median_household_income,
+        vulnerable_block_group_count
     ) |>
     simplify_for_dashboard(tolerance_m = 150)
+
+county_dashboard <- target_counties_2024 |>
+    select(
+        county_geoid,
+        county_name,
+        NAME,
+        state_po,
+        congressional_district_count,
+        congressional_districts,
+        elected_representatives,
+        representative_parties,
+        total_population,
+        total_households,
+        median_household_income,
+        poverty_rate,
+        county_rural_share,
+        cws_service_area_count,
+        cws_component_count,
+        cws_service_area_sq_km,
+        estimated_cws_service_population,
+        estimated_cws_service_households,
+        estimated_service_area_median_household_income,
+        vulnerable_block_group_count
+    ) |>
+    simplify_for_dashboard(tolerance_m = 125)
 
 # Complete block-group coverage for optional statewide Census shading. The
 # vulnerability overlay remains a separate layer containing only the highest
@@ -2036,6 +2378,8 @@ all_block_groups_dashboard <- census_block |>
         GEOID,
         NAME,
         state_po,
+        county_geoid,
+        county_name,
         congressional_district,
         elected_representative,
         representative_party,
@@ -2057,6 +2401,8 @@ vulnerable_block_groups_dashboard <- most_vulnerable_cws_block_groups |>
         GEOID,
         NAME,
         state_po,
+        county_geoid,
+        county_name,
         congressional_district,
         elected_representative,
         representative_party,
@@ -2088,6 +2434,33 @@ service_areas_dashboard <- service_district_intersections |>
     ) |>
     select(
         congressional_district,
+        pwsid,
+        pws_name,
+        population_served_count,
+        model_method,
+        verification_status,
+        symbology_field,
+        intersection_area_sq_km
+    ) |>
+    simplify_for_dashboard(tolerance_m = 100)
+
+county_service_areas_dashboard <- service_county_intersections |>
+    left_join(
+        target_service_areas |>
+            st_drop_geometry() |>
+            select(
+                pwsid,
+                pws_name,
+                population_served_count,
+                model_method,
+                verification_status,
+                symbology_field
+            ),
+        by = "pwsid",
+        relationship = "many-to-one"
+    ) |>
+    select(
+        county_geoid,
         pwsid,
         pws_name,
         population_served_count,
@@ -2134,9 +2507,47 @@ district_systems_dashboard <- service_district_intersections |>
         relationship = "many-to-one"
     )
 
+county_systems_dashboard <- service_county_intersections |>
+    st_drop_geometry() |>
+    distinct(county_geoid, pwsid) |>
+    left_join(
+        water_pub |>
+            select(
+                pwsid,
+                pws_name,
+                primacy_agency_code,
+                population_served_count,
+                service_connections_count,
+                primary_source_code,
+                owner_type_code,
+                active_component_count,
+                active_component_types,
+                violation_count,
+                unresolved_violation_count,
+                health_based_violation_count,
+                corrective_action_count,
+                enforcement_action_count,
+                site_inspection_count,
+                latest_site_inspection_date
+            ),
+        by = "pwsid",
+        relationship = "many-to-one"
+    ) |>
+    left_join(
+        point_coordinates_dashboard,
+        by = "pwsid",
+        relationship = "many-to-one"
+    )
+
 st_write(
     district_dashboard,
     file.path(dashboard_data_dir, "congressional_districts.geojson"),
+    delete_dsn = TRUE,
+    quiet = TRUE
+)
+st_write(
+    county_dashboard,
+    file.path(dashboard_data_dir, "counties.geojson"),
     delete_dsn = TRUE,
     quiet = TRUE
 )
@@ -2171,6 +2582,12 @@ st_write(
     delete_dsn = TRUE,
     quiet = TRUE
 )
+st_write(
+    county_service_areas_dashboard,
+    file.path(dashboard_data_dir, "county_cws_service_areas.geojson"),
+    delete_dsn = TRUE,
+    quiet = TRUE
+)
 write_csv(
     district_dashboard |> st_drop_geometry(),
     file.path(dashboard_data_dir, "district_metrics.csv")
@@ -2178,6 +2595,14 @@ write_csv(
 write_csv(
     district_systems_dashboard,
     file.path(dashboard_data_dir, "district_water_systems.csv")
+)
+write_csv(
+    county_dashboard |> st_drop_geometry(),
+    file.path(dashboard_data_dir, "county_metrics.csv")
+)
+write_csv(
+    county_systems_dashboard,
+    file.path(dashboard_data_dir, "county_water_systems.csv")
 )
 
 # Optional vector-tile bundle for a MapLibre/anymap-ts production map. Host this
@@ -2192,8 +2617,18 @@ if (requireNamespace("freestiler", quietly = TRUE)) {
                 min_zoom = 3,
                 max_zoom = 10
             ),
+            counties = freestiler::freestile_layer(
+                county_dashboard,
+                min_zoom = 3,
+                max_zoom = 10
+            ),
             cws_service_areas = freestiler::freestile_layer(
                 service_areas_dashboard,
+                min_zoom = 4,
+                max_zoom = 11
+            ),
+            county_cws_service_areas = freestiler::freestile_layer(
+                county_service_areas_dashboard,
                 min_zoom = 4,
                 max_zoom = 11
             ),
