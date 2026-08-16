@@ -190,10 +190,13 @@ acs_estimate_columns <- str_c(names(census_variables), "E")
 # Use collapsed table C17002 there; its first two ratio categories together
 # represent the population below the poverty threshold.
 block_group_census_variables <- c(
-    census_variables[!names(census_variables) %in% c(
-        "poverty_universe",
-        "population_below_poverty"
-    )],
+    census_variables[
+        !names(census_variables) %in%
+            c(
+                "poverty_universe",
+                "population_below_poverty"
+            )
+    ],
     poverty_universe = "C17002_001",
     poverty_below_half = "C17002_002",
     poverty_half_to_one = "C17002_003"
@@ -1097,8 +1100,8 @@ service_area_block_group_crosswalk <- read_csv(
         relationship = "many-to-one"
     ) |>
     mutate(
-        estimated_households_served_gross =
-            block_group_2024_households * bldg_weight
+        estimated_households_served_gross = block_group_2024_households *
+            bldg_weight
     )
 
 service_area_block_group_summary <- service_area_block_group_crosswalk |>
@@ -1414,326 +1417,325 @@ stopifnot(
     !anyNA(census_tract$cws_service_area_count)
 )
 
-######################## Visualize Census ########################
+# ######################## Visualize Census ########################
 
-library(freestiler)
-library(mapgl)
+# library(freestiler)
+# library(mapgl)
 
-# Prepare compact, tile-friendly versions of both spatial layers. Block groups
-# spanning more than one district are shown as "Multiple" regardless of party.
-block_groups_for_map <- census_block |>
-    filter(!st_is_empty(geometry)) |>
-    transmute(
-        block_group_id = GEOID,
-        block_group_name = NAME,
-        party_category = case_when(
-            district_overlap_count > 1 ~ "Multiple",
-            str_detect(
-                representative_party,
-                fixed("REPUBLICAN")
-            ) ~ "Republican",
-            str_detect(representative_party, fixed("DEMOCRAT")) ~ "Democrat",
-            TRUE ~ "Other / unassigned"
-        ),
-        congressional_district,
-        elected_representative,
-        representative_party,
-        total_population,
-        median_household_income = if_else(
-            median_household_income > 0,
-            median_household_income,
-            NA_real_
-        ),
-        employed_population,
-        unemployment_rate,
-        poverty_rate,
-        broadband_rate,
-        urban_population,
-        rural_population,
-        rural_share,
-        rural_percent = 100 * rural_share,
-        rural_status,
-        rural_majority,
-        geometry
-    )
+# # Prepare compact, tile-friendly versions of both spatial layers. Block groups
+# # spanning more than one district are shown as "Multiple" regardless of party.
+# block_groups_for_map <- census_block |>
+#     filter(!st_is_empty(geometry)) |>
+#     transmute(
+#         block_group_id = GEOID,
+#         block_group_name = NAME,
+#         party_category = case_when(
+#             district_overlap_count > 1 ~ "Multiple",
+#             str_detect(
+#                 representative_party,
+#                 fixed("REPUBLICAN")
+#             ) ~ "Republican",
+#             str_detect(representative_party, fixed("DEMOCRAT")) ~ "Democrat",
+#             TRUE ~ "Other / unassigned"
+#         ),
+#         congressional_district,
+#         elected_representative,
+#         representative_party,
+#         total_population,
+#         median_household_income = if_else(
+#             median_household_income > 0,
+#             median_household_income,
+#             NA_real_
+#         ),
+#         employed_population,
+#         unemployment_rate,
+#         poverty_rate,
+#         broadband_rate,
+#         urban_population,
+#         rural_population,
+#         rural_share,
+#         rural_percent = 100 * rural_share,
+#         rural_status,
+#         rural_majority,
+#         geometry
+#     )
 
-districts_for_map <- target_districts_2024 |>
-    transmute(
-        district_id = if_else(
-            district == 0,
-            str_glue("{state_po}-AL"),
-            str_glue("{state_po}-{str_pad(district, 2, pad = '0')}")
-        ),
-        district_name = NAME,
-        elected_representative = candidate,
-        representative_party = party,
-        geometry
-    )
+# districts_for_map <- target_districts_2024 |>
+#     transmute(
+#         district_id = if_else(
+#             district == 0,
+#             str_glue("{state_po}-AL"),
+#             str_glue("{state_po}-{str_pad(district, 2, pad = '0')}")
+#         ),
+#         district_name = NAME,
+#         elected_representative = candidate,
+#         representative_party = party,
+#         geometry
+#     )
 
-# Combine successfully geocoded systems from all five targeted states and
-# convert their longitude/latitude columns to an sf point layer.
-water_systems_for_map <- bind_rows(
-    addy_mi_water_pub,
-    addy_mn_water_pub,
-    addy_nj_water_pub,
-    addy_sd_water_pub,
-    addy_ga_water_pub
-) |>
-    filter(
-        is.finite(latitude),
-        is.finite(longitude),
-        between(latitude, 24, 50),
-        between(longitude, -125, -66)
-    ) |>
-    distinct(pwsid, .keep_all = TRUE) |>
-    st_as_sf(
-        coords = c("longitude", "latitude"),
-        crs = 4326,
-        remove = FALSE
-    ) |>
-    transmute(
-        water_system_id = pwsid,
-        water_system_name = pws_name,
-        state = state_code,
-        population_served = population_served_count,
-        address = str_squish(
-            str_c(address_line1, city_name, state_code, zip_code, sep = ", ")
-        ),
-        geometry
-    )
+# # Combine successfully geocoded systems from all five targeted states and
+# # convert their longitude/latitude columns to an sf point layer.
+# water_systems_for_map <- bind_rows(
+#     addy_mi_water_pub,
+#     addy_mn_water_pub,
+#     addy_nj_water_pub,
+#     addy_sd_water_pub,
+#     addy_ga_water_pub
+# ) |>
+#     filter(
+#         is.finite(latitude),
+#         is.finite(longitude),
+#         between(latitude, 24, 50),
+#         between(longitude, -125, -66)
+#     ) |>
+#     distinct(pwsid, .keep_all = TRUE) |>
+#     st_as_sf(
+#         coords = c("longitude", "latitude"),
+#         crs = 4326,
+#         remove = FALSE
+#     ) |>
+#     transmute(
+#         water_system_id = pwsid,
+#         water_system_name = pws_name,
+#         state = state_code,
+#         population_served = population_served_count,
+#         address = str_squish(
+#             str_c(address_line1, city_name, state_code, zip_code, sep = ", ")
+#         ),
+#         geometry
+#     )
 
-# Store both layers in one PMTiles archive so the map does not embed tens of
-# thousands of block-group polygons in the HTML widget.
-dir.create("data/tiles", recursive = TRUE, showWarnings = FALSE)
-census_tiles_file <- "data/tiles/census_block_groups_and_districts.pmtiles"
+# # Store both layers in one PMTiles archive so the map does not embed tens of
+# # thousands of block-group polygons in the HTML widget.
+# dir.create("data/tiles", recursive = TRUE, showWarnings = FALSE)
+# census_tiles_file <- "data/tiles/census_block_groups_and_districts.pmtiles"
 
-freestile(
-    list(
-        block_groups = freestile_layer(
-            block_groups_for_map,
-            min_zoom = 3,
-            max_zoom = 12
-        ),
-        congressional_districts = freestile_layer(
-            districts_for_map,
-            min_zoom = 3,
-            max_zoom = 12
-        ),
-        water_systems = freestile_layer(
-            water_systems_for_map,
-            min_zoom = 3,
-            max_zoom = 14
-        )
-    ),
-    census_tiles_file,
-    overwrite = TRUE
-)
-
-# PMTiles need a local server that supports HTTP range requests. If port 8080
-# is already occupied, run stop_server() or change the port here and below.
-serve_tiles(census_tiles_file, port = 8080)
-
-# Previous party-color styling; retained for easy reuse.
-# party_colors <- c(
-#     "Democrat" = "#2166ac",
-#     "Republican" = "#b2182b",
-#     "Multiple" = "#762a83",
-#     "Other / unassigned" = "#969696"
+# freestile(
+#     list(
+#         block_groups = freestile_layer(
+#             block_groups_for_map,
+#             min_zoom = 3,
+#             max_zoom = 12
+#         ),
+#         congressional_districts = freestile_layer(
+#             districts_for_map,
+#             min_zoom = 3,
+#             max_zoom = 12
+#         ),
+#         water_systems = freestile_layer(
+#             water_systems_for_map,
+#             min_zoom = 3,
+#             max_zoom = 14
+#         )
+#     ),
+#     census_tiles_file,
+#     overwrite = TRUE
 # )
 
-# Six Fisher-Jenks natural-break classes for median household income. The extra
-# class provides more detail among lower-income block groups.
-income_colors <- c(
-    "#ffffcc",
-    "#c7e9b4",
-    "#7fcdbb",
-    "#41b6c4",
-    "#2c7fb8",
-    "#253494"
-)
-income_jenks <- step_jenks(
-    column = "median_household_income",
-    data_values = block_groups_for_map$median_household_income |>
-        discard(is.na),
-    n = 6,
-    colors = income_colors,
-    na_color = "#d9d9d9"
-)
+# # PMTiles need a local server that supports HTTP range requests. If port 8080
+# # is already occupied, run stop_server() or change the port here and below.
+# serve_tiles(census_tiles_file, port = 8080)
 
-census_map <- maplibre(
-    # Use a complete token-free style as the map scaffold. The satellite raster
-    # added below covers it, while this remains a fallback if imagery fails.
-    style = openfreemap_style("dark"),
-    bounds = c(-105, 30, -73, 49),
-    projection = "mercator"
-) |>
-    # Token-free Esri World Imagery raster basemap. Attribution is required.
-    add_raster_source(
-        id = "satellite-source",
-        tiles = c(
-            paste0(
-                "https://server.arcgisonline.com/ArcGIS/rest/services/",
-                "World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            )
-        ),
-        tileSize = 256,
-        maxzoom = 19,
-        attribution = paste(
-            "Sources: Esri, Maxar, Earthstar Geographics,",
-            "and the GIS User Community"
-        )
-    ) |>
-    add_raster_layer(
-        id = "satellite-basemap",
-        source = "satellite-source",
-        raster_opacity = 1
-    ) |>
-    add_pmtiles_source(
-        id = "census-source",
-        url = paste0(
-            "http://localhost:8080/",
-            basename(census_tiles_file)
-        ),
-        promote_id = list(
-            block_groups = "block_group_id",
-            congressional_districts = "district_id",
-            water_systems = "water_system_id"
-        )
-    ) |>
-    # Bottom layer: block groups colored by Jenks-classified household income.
-    add_fill_layer(
-        id = "block-groups-fill",
-        source = "census-source",
-        source_layer = "block_groups",
-        # Previous party-color version:
-        # fill_color = match_expr(
-        #     column = "party_category",
-        #     values = names(party_colors),
-        #     stops = unname(party_colors),
-        #     default = "#969696"
-        # ),
-        fill_color = income_jenks$expression,
-        fill_opacity = 0.62,
-        fill_outline_color = "rgba(255, 255, 255, 0.25)",
-        hover_options = list(fill_opacity = 0.9),
-        tooltip = concat(
-            "<strong>",
-            get_column("block_group_name"),
-            "</strong><br><strong>District:</strong> ",
-            get_column("congressional_district"),
-            "<br><strong>Representative:</strong> ",
-            get_column("elected_representative"),
-            "<br><strong>Party:</strong> ",
-            get_column("representative_party"),
-            "<br><strong>Population:</strong> ",
-            number_format(get_column("total_population"), locale = "en"),
-            "<br><strong>Median household income:</strong> $",
-            number_format(
-                get_column("median_household_income"),
-                locale = "en"
-            ),
-            "<br><strong>Employed residents:</strong> ",
-            number_format(get_column("employed_population"), locale = "en"),
-            "<br><strong>Unemployment:</strong> ",
-            number_format(
-                get_column("unemployment_rate"),
-                locale = "en",
-                maximum_fraction_digits = 1
-            ),
-            "%<br><strong>Poverty:</strong> ",
-            number_format(
-                get_column("poverty_rate"),
-                locale = "en",
-                maximum_fraction_digits = 1
-            ),
-            "%<br><strong>Broadband:</strong> ",
-            number_format(
-                get_column("broadband_rate"),
-                locale = "en",
-                maximum_fraction_digits = 1
-            ),
-            "%<br><strong>Rural population:</strong> ",
-            number_format(get_column("rural_population"), locale = "en"),
-            "<br><strong>Rural share:</strong> ",
-            number_format(
-                get_column("rural_percent"),
-                locale = "en",
-                maximum_fraction_digits = 1
-            ),
-            "%<br><strong>Rural status:</strong> ",
-            get_column("rural_status")
-        ),
-        tooltip_style = tooltip_style("light")
-    ) |>
-    # Top layer: congressional district outlines only. Adding this last keeps
-    # the district boundaries above the block-group fills.
-    add_line_layer(
-        id = "congressional-district-outlines",
-        source = "census-source",
-        source_layer = "congressional_districts",
-        line_color = "white",
-        line_width = .5,
-        line_opacity = 0.95,
-        hover_options = list(line_width = 4),
-        tooltip = concat(
-            "<strong>",
-            get_column("district_name"),
-            "</strong><br><strong>Representative:</strong> ",
-            get_column("elected_representative"),
-            "<br><strong>Party:</strong> ",
-            get_column("representative_party")
-        ),
-        tooltip_style = tooltip_style("dark")
-    ) |>
-    # Top point layer: active water systems serving fewer than 3,300 people.
-    add_circle_layer(
-        id = "water-systems",
-        source = "census-source",
-        source_layer = "water_systems",
-        circle_color = "#de2d26",
-        circle_radius = 3,
-        circle_opacity = 0.9,
-        circle_stroke_color = "#ffffff",
-        circle_stroke_width = 1,
-        hover_options = list(circle_radius = 7),
-        tooltip = concat(
-            "<strong>",
-            get_column("water_system_name"),
-            "</strong><br><strong>PWSID:</strong> ",
-            get_column("water_system_id"),
-            "<br><strong>State:</strong> ",
-            get_column("state"),
-            "<br><strong>Population served:</strong> ",
-            number_format(get_column("population_served"), locale = "en"),
-            "<br><strong>Address:</strong> ",
-            get_column("address")
-        ),
-        tooltip_style = tooltip_style("light")
-    ) |>
-    # Previous party legend:
-    # add_categorical_legend(
-    #     legend_title = "2024 House Party Win",
-    #     values = names(party_colors),
-    #     colors = unname(party_colors),
-    #     position = "bottom-left"
-    # ) |>
-    add_legend(
-        legend_title = "Median household income (Jenks)",
-        values = get_legend_labels(
-            income_jenks,
-            format = "currency",
-            digits = 0
-        ),
-        colors = get_legend_colors(income_jenks),
-        type = "categorical",
-        position = "bottom-left"
-    )
+# # Previous party-color styling; retained for easy reuse.
+# # party_colors <- c(
+# #     "Democrat" = "#2166ac",
+# #     "Republican" = "#b2182b",
+# #     "Multiple" = "#762a83",
+# #     "Other / unassigned" = "#969696"
+# # )
 
-census_map
+# # Six Fisher-Jenks natural-break classes for median household income. The extra
+# # class provides more detail among lower-income block groups.
+# income_colors <- c(
+#     "#ffffcc",
+#     "#c7e9b4",
+#     "#7fcdbb",
+#     "#41b6c4",
+#     "#2c7fb8",
+#     "#253494"
+# )
+# income_jenks <- step_jenks(
+#     column = "median_household_income",
+#     data_values = block_groups_for_map$median_household_income |>
+#         discard(is.na),
+#     n = 6,
+#     colors = income_colors,
+#     na_color = "#d9d9d9"
+# )
 
-# Stop the local PMTiles server when you are finished with the map:
-stop_server()
+# census_map <- maplibre(
+#     # Use a complete token-free style as the map scaffold. The satellite raster
+#     # added below covers it, while this remains a fallback if imagery fails.
+#     style = openfreemap_style("dark"),
+#     bounds = c(-105, 30, -73, 49),
+#     projection = "mercator"
+# ) |>
+#     # Token-free Esri World Imagery raster basemap. Attribution is required.
+#     add_raster_source(
+#         id = "satellite-source",
+#         tiles = c(
+#             paste0(
+#                 "https://server.arcgisonline.com/ArcGIS/rest/services/",
+#                 "World_Imagery/MapServer/tile/{z}/{y}/{x}"
+#             )
+#         ),
+#         tileSize = 256,
+#         maxzoom = 19,
+#         attribution = paste(
+#             "Sources: Esri, Maxar, Earthstar Geographics,",
+#             "and the GIS User Community"
+#         )
+#     ) |>
+#     add_raster_layer(
+#         id = "satellite-basemap",
+#         source = "satellite-source",
+#         raster_opacity = 1
+#     ) |>
+#     add_pmtiles_source(
+#         id = "census-source",
+#         url = paste0(
+#             "http://localhost:8080/",
+#             basename(census_tiles_file)
+#         ),
+#         promote_id = list(
+#             block_groups = "block_group_id",
+#             congressional_districts = "district_id",
+#             water_systems = "water_system_id"
+#         )
+#     ) |>
+#     # Bottom layer: block groups colored by Jenks-classified household income.
+#     add_fill_layer(
+#         id = "block-groups-fill",
+#         source = "census-source",
+#         source_layer = "block_groups",
+#         # Previous party-color version:
+#         # fill_color = match_expr(
+#         #     column = "party_category",
+#         #     values = names(party_colors),
+#         #     stops = unname(party_colors),
+#         #     default = "#969696"
+#         # ),
+#         fill_color = income_jenks$expression,
+#         fill_opacity = 0.62,
+#         fill_outline_color = "rgba(255, 255, 255, 0.25)",
+#         hover_options = list(fill_opacity = 0.9),
+#         tooltip = concat(
+#             "<strong>",
+#             get_column("block_group_name"),
+#             "</strong><br><strong>District:</strong> ",
+#             get_column("congressional_district"),
+#             "<br><strong>Representative:</strong> ",
+#             get_column("elected_representative"),
+#             "<br><strong>Party:</strong> ",
+#             get_column("representative_party"),
+#             "<br><strong>Population:</strong> ",
+#             number_format(get_column("total_population"), locale = "en"),
+#             "<br><strong>Median household income:</strong> $",
+#             number_format(
+#                 get_column("median_household_income"),
+#                 locale = "en"
+#             ),
+#             "<br><strong>Employed residents:</strong> ",
+#             number_format(get_column("employed_population"), locale = "en"),
+#             "<br><strong>Unemployment:</strong> ",
+#             number_format(
+#                 get_column("unemployment_rate"),
+#                 locale = "en",
+#                 maximum_fraction_digits = 1
+#             ),
+#             "%<br><strong>Poverty:</strong> ",
+#             number_format(
+#                 get_column("poverty_rate"),
+#                 locale = "en",
+#                 maximum_fraction_digits = 1
+#             ),
+#             "%<br><strong>Broadband:</strong> ",
+#             number_format(
+#                 get_column("broadband_rate"),
+#                 locale = "en",
+#                 maximum_fraction_digits = 1
+#             ),
+#             "%<br><strong>Rural population:</strong> ",
+#             number_format(get_column("rural_population"), locale = "en"),
+#             "<br><strong>Rural share:</strong> ",
+#             number_format(
+#                 get_column("rural_percent"),
+#                 locale = "en",
+#                 maximum_fraction_digits = 1
+#             ),
+#             "%<br><strong>Rural status:</strong> ",
+#             get_column("rural_status")
+#         ),
+#         tooltip_style = tooltip_style("light")
+#     ) |>
+#     # Top layer: congressional district outlines only. Adding this last keeps
+#     # the district boundaries above the block-group fills.
+#     add_line_layer(
+#         id = "congressional-district-outlines",
+#         source = "census-source",
+#         source_layer = "congressional_districts",
+#         line_color = "white",
+#         line_width = .5,
+#         line_opacity = 0.95,
+#         hover_options = list(line_width = 4),
+#         tooltip = concat(
+#             "<strong>",
+#             get_column("district_name"),
+#             "</strong><br><strong>Representative:</strong> ",
+#             get_column("elected_representative"),
+#             "<br><strong>Party:</strong> ",
+#             get_column("representative_party")
+#         ),
+#         tooltip_style = tooltip_style("dark")
+#     ) |>
+#     # Top point layer: active water systems serving fewer than 3,300 people.
+#     add_circle_layer(
+#         id = "water-systems",
+#         source = "census-source",
+#         source_layer = "water_systems",
+#         circle_color = "#de2d26",
+#         circle_radius = 3,
+#         circle_opacity = 0.9,
+#         circle_stroke_color = "#ffffff",
+#         circle_stroke_width = 1,
+#         hover_options = list(circle_radius = 7),
+#         tooltip = concat(
+#             "<strong>",
+#             get_column("water_system_name"),
+#             "</strong><br><strong>PWSID:</strong> ",
+#             get_column("water_system_id"),
+#             "<br><strong>State:</strong> ",
+#             get_column("state"),
+#             "<br><strong>Population served:</strong> ",
+#             number_format(get_column("population_served"), locale = "en"),
+#             "<br><strong>Address:</strong> ",
+#             get_column("address")
+#         ),
+#         tooltip_style = tooltip_style("light")
+#     ) |>
+#     # Previous party legend:
+#     # add_categorical_legend(
+#     #     legend_title = "2024 House Party Win",
+#     #     values = names(party_colors),
+#     #     colors = unname(party_colors),
+#     #     position = "bottom-left"
+#     # ) |>
+#     add_legend(
+#         legend_title = "Median household income (Jenks)",
+#         values = get_legend_labels(
+#             income_jenks,
+#             format = "currency",
+#             digits = 0
+#         ),
+#         colors = get_legend_colors(income_jenks),
+#         type = "categorical",
+#         position = "bottom-left"
+#     )
 
+# census_map
+
+# # Stop the local PMTiles server when you are finished with the map:
+# stop_server()
 
 ######################## analysis ########################
 
@@ -1782,9 +1784,9 @@ block_group_vulnerability_ranked <- census_block |>
     mutate(
         high_poverty_percentile = percent_rank(poverty_rate),
         low_income_percentile = percent_rank(-median_household_income),
-        vulnerability_score = 100 * (
-            high_poverty_percentile + low_income_percentile
-        ) / 2
+        vulnerability_score = 100 *
+            (high_poverty_percentile + low_income_percentile) /
+            2
     ) |>
     arrange(desc(vulnerability_score)) |>
     mutate(vulnerability_rank = row_number())
@@ -1841,6 +1843,28 @@ vulnerable_party_summary <- vulnerable_block_group_representation |>
     count(representative_party, name = "representative_count") |>
     arrange(desc(representative_count), representative_party)
 
+# Systems connected to vulnerable block groups containing any rural residents,
+# plus the stricter subset where at least half the population is rural.
+vulnerable_rural_cws <- service_area_block_group_crosswalk |>
+    semi_join(
+        most_vulnerable_cws_block_groups |>
+            st_drop_geometry() |>
+            filter(rural_population > 0) |>
+            select(GEOID),
+        by = c("block_group_geoid" = "GEOID")
+    ) |>
+    distinct(pwsid)
+
+vulnerable_majority_rural_cws <- service_area_block_group_crosswalk |>
+    semi_join(
+        most_vulnerable_cws_block_groups |>
+            st_drop_geometry() |>
+            filter(rural_majority %in% TRUE) |>
+            select(GEOID),
+        by = c("block_group_geoid" = "GEOID")
+    ) |>
+    distinct(pwsid)
+
 vulnerable_block_group_summary <- most_vulnerable_cws_block_groups |>
     st_drop_geometry() |>
     summarise(
@@ -1879,8 +1903,28 @@ vulnerable_block_group_summary <- most_vulnerable_cws_block_groups |>
             )),
             collapse = ", "
         ),
+        block_groups_with_rural_population = sum(rural_population > 0),
+        majority_rural_block_group_count = sum(rural_majority %in% TRUE),
+        fully_rural_block_group_count = sum(rural_status == "Fully rural"),
+        distinct_cws_serving_rural_block_groups = n_distinct(
+            vulnerable_rural_cws$pwsid
+        ),
+        distinct_cws_serving_majority_rural_block_groups = n_distinct(
+            vulnerable_majority_rural_cws$pwsid
+        ),
         estimated_population_served = round(
             sum(estimated_cws_service_population, na.rm = TRUE)
+        ),
+        estimated_rural_population_served = round(
+            sum(
+                estimated_cws_service_population * coalesce(rural_share, 0),
+                na.rm = TRUE
+            )
+        ),
+        estimated_rural_share_of_population_served = if_else(
+            estimated_population_served > 0,
+            estimated_rural_population_served / estimated_population_served,
+            NA_real_
         )
     )
 
@@ -1905,7 +1949,16 @@ vulnerability_analysis_text <- vulnerable_block_group_summary |>
             "{scales::percent(population_weighted_poverty_rate / 100, accuracy = 0.1)}, ",
             "and block-group median household incomes range from ",
             "{scales::dollar(minimum_median_household_income, accuracy = 1)} to ",
-            "{scales::dollar(maximum_median_household_income, accuracy = 1)}."
+            "{scales::dollar(maximum_median_household_income, accuracy = 1)}. ",
+            "Within this group, {scales::comma(block_groups_with_rural_population)} ",
+            "block groups contain rural residents and ",
+            "{scales::comma(majority_rural_block_group_count)} are majority rural. ",
+            "Using each block group's rural population share, an estimated ",
+            "{scales::comma(estimated_rural_population_served)} people—or ",
+            "{scales::percent(estimated_rural_share_of_population_served, accuracy = 0.1)} ",
+            "of the estimated population served—are rural. These rural block ",
+            "groups are connected to ",
+            "{scales::comma(distinct_cws_serving_rural_block_groups)} distinct CWS."
         )
     ) |>
     pull(text)
@@ -1937,6 +1990,212 @@ write_csv(
     most_vulnerable_cws,
     file.path(analysis_output_dir, "most_vulnerable_cws.csv")
 )
+
+# Lightweight exports for the standalone Streamlit dashboard. Spatial layers
+# are simplified in an equal-area CRS before conversion back to WGS84, reducing
+# browser payload without changing the source analysis objects.
+dashboard_data_dir <- "dashboard/data"
+dir.create(dashboard_data_dir, recursive = TRUE, showWarnings = FALSE)
+
+simplify_for_dashboard <- function(data, tolerance_m = 100) {
+    data |>
+        st_make_valid() |>
+        st_transform(5070) |>
+        st_simplify(dTolerance = tolerance_m, preserveTopology = TRUE) |>
+        st_transform(4326)
+}
+
+district_dashboard <- target_districts_2024 |>
+    select(
+        congressional_district,
+        NAME,
+        state_po,
+        district,
+        candidate,
+        party,
+        total_population,
+        total_households,
+        median_household_income,
+        poverty_rate,
+        district_rural_share,
+        cws_service_area_count,
+        cws_component_count,
+        cws_service_area_sq_km,
+        estimated_cws_service_population,
+        estimated_cws_service_households,
+        estimated_service_area_median_household_income
+    ) |>
+    simplify_for_dashboard(tolerance_m = 150)
+
+served_block_groups_dashboard <- census_block |>
+    filter(cws_service_area_count > 0, !st_is_empty(geometry)) |>
+    select(
+        GEOID,
+        NAME,
+        state_po,
+        congressional_district,
+        elected_representative,
+        representative_party,
+        total_population,
+        total_households,
+        median_household_income,
+        poverty_rate,
+        rural_share,
+        rural_status,
+        cws_service_area_count,
+        cws_component_count,
+        estimated_cws_service_population,
+        estimated_cws_service_households
+    ) |>
+    simplify_for_dashboard(tolerance_m = 75)
+
+vulnerable_block_groups_dashboard <- most_vulnerable_cws_block_groups |>
+    select(
+        GEOID,
+        NAME,
+        state_po,
+        congressional_district,
+        elected_representative,
+        representative_party,
+        vulnerability_rank,
+        vulnerability_score,
+        total_population,
+        median_household_income,
+        poverty_rate,
+        rural_status,
+        cws_service_area_count,
+        estimated_cws_service_population
+    ) |>
+    simplify_for_dashboard(tolerance_m = 75)
+
+service_areas_dashboard <- service_district_intersections |>
+    left_join(
+        target_service_areas |>
+            st_drop_geometry() |>
+            select(
+                pwsid,
+                pws_name,
+                population_served_count,
+                model_method,
+                verification_status,
+                symbology_field
+            ),
+        by = "pwsid",
+        relationship = "many-to-one"
+    ) |>
+    select(
+        congressional_district,
+        pwsid,
+        pws_name,
+        population_served_count,
+        model_method,
+        verification_status,
+        symbology_field,
+        intersection_area_sq_km
+    ) |>
+    simplify_for_dashboard(tolerance_m = 100)
+
+point_coordinates_dashboard <- cws_water_system_points |>
+    st_drop_geometry() |>
+    select(pwsid, latitude, longitude)
+
+district_systems_dashboard <- service_district_intersections |>
+    st_drop_geometry() |>
+    distinct(congressional_district, pwsid) |>
+    left_join(
+        water_pub |>
+            select(
+                pwsid,
+                pws_name,
+                primacy_agency_code,
+                population_served_count,
+                service_connections_count,
+                primary_source_code,
+                owner_type_code,
+                active_component_count,
+                active_component_types,
+                violation_count,
+                unresolved_violation_count,
+                health_based_violation_count,
+                corrective_action_count,
+                enforcement_action_count,
+                site_inspection_count,
+                latest_site_inspection_date
+            ),
+        by = "pwsid",
+        relationship = "many-to-one"
+    ) |>
+    left_join(
+        point_coordinates_dashboard,
+        by = "pwsid",
+        relationship = "many-to-one"
+    )
+
+st_write(
+    district_dashboard,
+    file.path(dashboard_data_dir, "congressional_districts.geojson"),
+    delete_dsn = TRUE,
+    quiet = TRUE
+)
+st_write(
+    served_block_groups_dashboard,
+    file.path(dashboard_data_dir, "served_block_groups.geojson"),
+    delete_dsn = TRUE,
+    quiet = TRUE
+)
+st_write(
+    vulnerable_block_groups_dashboard,
+    file.path(dashboard_data_dir, "vulnerable_block_groups.geojson"),
+    delete_dsn = TRUE,
+    quiet = TRUE
+)
+st_write(
+    service_areas_dashboard,
+    file.path(dashboard_data_dir, "cws_service_areas.geojson"),
+    delete_dsn = TRUE,
+    quiet = TRUE
+)
+write_csv(
+    district_dashboard |> st_drop_geometry(),
+    file.path(dashboard_data_dir, "district_metrics.csv")
+)
+write_csv(
+    district_systems_dashboard,
+    file.path(dashboard_data_dir, "district_water_systems.csv")
+)
+
+# Optional vector-tile bundle for a MapLibre/anymap-ts production map. Host this
+# file on an HTTP range-enabled static service (for example S3, R2, or Pages)
+# and point the Streamlit frontend to its public URL. The GeoJSON exports remain
+# the no-infrastructure fallback for local development and small deployments.
+if (requireNamespace("freestiler", quietly = TRUE)) {
+    freestiler::freestile(
+        list(
+            congressional_districts = freestiler::freestile_layer(
+                district_dashboard,
+                min_zoom = 3,
+                max_zoom = 10
+            ),
+            cws_service_areas = freestiler::freestile_layer(
+                service_areas_dashboard,
+                min_zoom = 4,
+                max_zoom = 11
+            ),
+            served_block_groups = freestiler::freestile_layer(
+                served_block_groups_dashboard,
+                min_zoom = 5,
+                max_zoom = 11
+            ),
+            vulnerable_block_groups = freestiler::freestile_layer(
+                vulnerable_block_groups_dashboard,
+                min_zoom = 5,
+                max_zoom = 11
+            )
+        ),
+        file.path(dashboard_data_dir, "water_infrastructure.pmtiles"),
+        overwrite = TRUE
+    )
+}
 
 vulnerable_block_group_summary
 vulnerable_party_summary
