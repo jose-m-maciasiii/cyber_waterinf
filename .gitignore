@@ -6,4 +6,6 @@ data/tiles/
 *.DS_Store
 
 *.csv
+# Keep the small, precomputed CSV inputs required by the Streamlit deployment.
+!dashboard/data/*.csv
 *.docx
