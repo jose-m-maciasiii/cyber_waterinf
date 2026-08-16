@@ -11,6 +11,7 @@ import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
+LOGO_PATH = APP_DIR / "assets" / "periphery_analytics_logo.png"
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 STATE_NAMES = {
     "GA": "Georgia",
@@ -482,7 +483,7 @@ def show_map_legend(
     }.get(census_variable, "")
     vulnerable_item = (
         '<span class="legend-item"><span class="legend-swatch '
-        'legend-vulnerable"></span>Highest vulnerability decile</span>'
+        'legend-vulnerable"></span>Highest Disadvantaged Decile</span>'
         if show_vulnerable
         else ""
     )
@@ -492,9 +493,9 @@ def show_map_legend(
           <span class="map-legend-title">Legend</span>
           {census_items}
           {vulnerable_item}
-          <span class="legend-item"><span class="legend-swatch legend-service"></span>CWS service area</span>
-          <span class="legend-item"><span class="legend-district"></span>Congressional district</span>
-          <span class="legend-item"><span class="legend-point"></span>Administrative point</span>
+          <span class="legend-item"><span class="legend-swatch legend-service"></span>Vulnerable CWS service area</span>
+          <span class="legend-item"><span class="legend-district"></span>Congressional District </span>
+          <span class="legend-item"><span class="legend-point"></span>CWS Administration Address</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -555,7 +556,7 @@ with st.sidebar:
         st.divider()
         st.subheader("Outside Certification Requirements")
         st.caption(
-            "These small community water systems serve 3,300 people or fewer "
+            "The vulnerable community water systems identified here serve 3,300 people or fewer "
             "and are not required to certify completion of a risk and resilience "
             "assessment or emergency response plan to EPA under "
             "[America's Water Infrastructure Act (AWIA)]"
@@ -565,7 +566,7 @@ with st.sidebar:
             "Highlight most disadvantaged block groups",
             value=False,
             help=(
-                "Shows the highest vulnerability decile among Census block groups "
+                "Shows the highest disadvantaged decile among Census block groups "
                 "connected to these small community water systems. Vulnerability "
                 "combines higher poverty with lower median household income."
             ),
@@ -595,6 +596,10 @@ with st.sidebar:
             "contact addresses reported to EPA and may contain positional errors; "
             "they do not necessarily represent physical infrastructure locations."
         )
+    st.image(
+        str(LOGO_PATH),
+        width=190,
+    )
 
 
 if not selected_state:
@@ -792,15 +797,6 @@ with context_col:
     st.metric("District median household income", money(district_row["median_household_income"]))
     st.metric("District poverty rate", percent(district_row["poverty_rate"]))
     st.metric("Rural population share", percent(district_row["district_rural_share"], False))
-    st.markdown(
-        f"""
-        <div class="source-box"><strong>What this means</strong><br>
-        The service-area figures describe the portions of this district associated
-        with active community water systems serving no more than 3,300 people.
-        They are not measures of every drinking-water provider in the district.</div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 overview_tab, systems_tab, communities_tab, methods_tab = st.tabs(
