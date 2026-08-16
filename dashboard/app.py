@@ -12,6 +12,13 @@ import streamlit as st
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+STATE_NAMES = {
+    "GA": "Georgia",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "NJ": "New Jersey",
+    "SD": "South Dakota",
+}
 
 
 st.set_page_config(
@@ -111,8 +118,8 @@ st.markdown(
       .map-legend-title { color:var(--ink); font-weight:700; margin-right:.1rem; }
       .legend-item { display:inline-flex; align-items:center; gap:.35rem; }
       .legend-swatch { display:inline-block; width:16px; height:12px; border-radius:2px; }
-      .legend-point { width:10px; height:10px; border-radius:50%; background:#cc202f;
-                      border:1px solid white; box-shadow:0 0 0 1px #9d1824; }
+      .legend-point { width:10px; height:10px; border-radius:50%; background:#095b6c;
+                      border:1.5px solid #0f191e; }
       .legend-district { width:18px; height:10px; border:2px solid #142a3d;
                          background:transparent; }
       .legend-service { background:rgba(20,145,170,.35); border:2px solid #11708e; }
@@ -401,9 +408,9 @@ def map_layers(
                 get_radius=90,
                 radius_min_pixels=3,
                 radius_max_pixels=8,
-                get_fill_color=[204, 32, 47, 220],
-                get_line_color=[255, 255, 255, 240],
-                line_width_min_pixels=1,
+                get_fill_color=[9, 91, 108, 235],
+                get_line_color=[15, 25, 30, 255],
+                line_width_min_pixels=1.5,
                 pickable=True,
             )
         )
@@ -580,7 +587,7 @@ with st.sidebar:
         )
 
     st.divider()
-    with st.expander("Sources & location note"):
+    with st.expander("Data Sources"):
         st.caption(
             "Analysis by Jose M. Macias III of Periphery Analytics. Data sources: "
             "U.S. EPA SDWIS and U.S. Census Bureau American Community Survey "
@@ -643,7 +650,8 @@ if not selected_district:
     ].drop_duplicates(subset=["pwsid"])
 
     st.markdown(
-        f'<div class="eyebrow">Statewide exploration</div><h2>{selected_state} water systems</h2>',
+        '<div class="eyebrow">Statewide exploration</div>'
+        f'<h2>{STATE_NAMES.get(selected_state, selected_state)} water systems</h2>',
         unsafe_allow_html=True,
     )
     st.markdown(
