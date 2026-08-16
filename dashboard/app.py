@@ -506,6 +506,30 @@ def show_map_legend(
     )
 
 
+def show_footer() -> None:
+    """Show the branded, linked source footer on every dashboard view."""
+    st.divider()
+    footer_brand, footer_sources = st.columns(
+        [1, 5], vertical_alignment="center"
+    )
+    with footer_brand:
+        st.image(str(LOGO_PATH), width=110)
+        st.caption("Periphery Analytics")
+    with footer_sources:
+        st.markdown(
+            """
+            <div class="footer-copy"><strong>Sources</strong><br>
+            <a href="https://echo.epa.gov/tools/data-downloads/sdwa-download-summary" target="_blank">U.S. EPA Safe Drinking Water Information System (SDWIS)</a> ·
+            <a href="https://www.epa.gov/ground-water-and-drinking-water/public-water-system-service-areas" target="_blank">EPA Public Water System Service Areas v3.0</a> ·
+            <a href="https://api.census.gov/data/2024/acs/acs5.html" target="_blank">U.S. Census Bureau 2020–2024 ACS five-year estimates</a> ·
+            <a href="https://www.census.gov/data/tables/2020/dec/2020-census-dhc.html" target="_blank">2020 Census Demographic and Housing Characteristics File</a> ·
+            <a href="https://electionlab.mit.edu/data" target="_blank">MIT Election Data and Science Lab, U.S. House 1976–2024</a>.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 try:
     districts = load_csv("district_metrics.csv")
     systems = load_csv("district_water_systems.csv")
@@ -626,6 +650,7 @@ if not selected_state:
         map_style=MAP_STYLE,
     )
     st.pydeck_chart(blank_deck, use_container_width=True, height=650)
+    show_footer()
     st.stop()
 
 
@@ -700,6 +725,7 @@ if not selected_district:
         "for the selected state."
     )
     show_selected_map_feature(state_map_event)
+    show_footer()
     st.stop()
 
 
@@ -922,21 +948,4 @@ with methods_tab:
         """
     )
 
-st.divider()
-footer_brand, footer_sources = st.columns([1, 5], vertical_alignment="center")
-with footer_brand:
-    st.image(str(LOGO_PATH), width=110)
-    st.caption("Periphery Analytics")
-with footer_sources:
-    st.markdown(
-        """
-        <div class="footer-copy"><strong>Sources</strong><br>
-        <a href="https://echo.epa.gov/tools/data-downloads/sdwa-download-summary" target="_blank">U.S. EPA Safe Drinking Water Information System (SDWIS)</a> ·
-        <a href="https://www.epa.gov/ground-water-and-drinking-water/public-water-system-service-areas" target="_blank">EPA Public Water System Service Areas v3.0</a> ·
-        <a href="https://api.census.gov/data/2024/acs/acs5.html" target="_blank">U.S. Census Bureau 2020–2024 ACS five-year estimates</a> ·
-        <a href="https://www.census.gov/data/tables/2020/dec/2020-census-dhc.html" target="_blank">2020 Census Demographic and Housing Characteristics File</a> ·
-        <a href="https://electionlab.mit.edu/data" target="_blank">MIT Election Data and Science Lab, U.S. House 1976–2024</a>.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+show_footer()
