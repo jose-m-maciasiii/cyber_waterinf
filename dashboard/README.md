@@ -1,7 +1,9 @@
 # Small Water Systems Explorer
 
 A standalone Streamlit dashboard for exploring active community water systems
-serving 3,300 people or fewer by congressional district.
+serving 3,300 people or fewer by congressional district or county. See the
+[project README](../README.md) for the full methodology, sources, limitations,
+and reproducibility notes.
 
 ## Build the data
 
@@ -32,8 +34,9 @@ with `anymap-ts` or the MapLibre PMTiles protocol. Do not rely on Streamlit's
 built-in static-file server for production PMTiles delivery; `.pmtiles` is not
 one of its officially supported static media types.
 
-The archive is regenerated with the analysis pipeline and contains four named
-layers: `congressional_districts`, `cws_service_areas`, `all_block_groups`, and
+The archive is regenerated with the analysis pipeline and contains six named
+layers: `congressional_districts`, `counties`, `cws_service_areas`,
+`county_cws_service_areas`, `all_block_groups`, and
 `vulnerable_block_groups`. Keep `data/water_infrastructure.pmtiles` with the
 deployment artifacts even while the Streamlit app uses state-split GeoJSON as
 its default, zero-infrastructure map source.
@@ -41,7 +44,9 @@ its default, zero-infrastructure map source.
 ## Principal outputs
 
 - Congressional-district metrics and boundaries
+- County metrics and boundaries, including overlapping congressional representation
 - CWS service areas clipped to congressional districts
+- CWS service areas clipped to counties
 - Complete Census block-group coverage, split into lightweight state files
 - CWS-served block groups in the district community tables
 - The most vulnerable 10% of served block groups
