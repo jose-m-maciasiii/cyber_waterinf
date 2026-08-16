@@ -546,7 +546,25 @@ with st.sidebar:
 
     if selected_state:
         st.divider()
-        show_vulnerable = st.checkbox("Most vulnerable block groups", value=False)
+        st.subheader("Outside AWIA Certification Requirements")
+        st.caption(
+            "These small community water systems serve 3,300 people or fewer "
+            "and are not required to certify completion of a risk and resilience "
+            "assessment or emergency response plan to EPA under AWIA."
+        )
+        show_vulnerable = st.checkbox(
+            "Highlight most disadvantaged block groups",
+            value=False,
+            help=(
+                "Shows the highest vulnerability decile among Census block groups "
+                "connected to these small community water systems. Vulnerability "
+                "combines higher poverty with lower median household income."
+            ),
+        )
+        st.caption(
+            "When selected, dark red block groups represent the most disadvantaged "
+            "10% based equally on high poverty and low median household income."
+        )
         st.subheader("Optional Census Variables")
         census_variable = st.selectbox(
             "Color block groups by",
@@ -699,7 +717,10 @@ st.markdown(
 )
 
 metric_cols = st.columns(5)
-metric_cols[0].metric("Small Community Water Systems", number(district_row["cws_service_area_count"]))
+metric_cols[0].metric(
+    "CWS outside AWIA threshold",
+    number(district_row["cws_service_area_count"]),
+)
 metric_cols[1].metric(
     "Estimated population served",
     number(district_row["estimated_cws_service_population"]),
