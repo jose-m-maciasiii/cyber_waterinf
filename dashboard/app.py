@@ -546,11 +546,13 @@ with st.sidebar:
 
     if selected_state:
         st.divider()
-        st.subheader("Outside AWIA Certification Requirements")
+        st.subheader("Outside Certification Requirements")
         st.caption(
             "These small community water systems serve 3,300 people or fewer "
             "and are not required to certify completion of a risk and resilience "
-            "assessment or emergency response plan to EPA under AWIA."
+            "assessment or emergency response plan to EPA under "
+            "[America's Water Infrastructure Act (AWIA)]"
+            "(https://www.epa.gov/waterresilience/awia-section-2013)."
         )
         show_vulnerable = st.checkbox(
             "Highlight most disadvantaged block groups",
