@@ -112,6 +112,10 @@ st.markdown(
       [data-baseweb="tab"] { padding:.65rem .9rem; }
       [data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:12px;
                                      overflow:hidden; }
+      .footer-copy { color:var(--ink-soft); font-size:.86rem; line-height:1.65; }
+      .footer-copy strong { color:var(--ink); }
+      .footer-copy a { color:var(--blue); text-decoration:none; }
+      .footer-copy a:hover { text-decoration:underline; }
       .map-legend { display:flex; flex-wrap:wrap; gap:.45rem 1rem; align-items:center;
                     margin:.6rem 0 .3rem; padding:.55rem .7rem; color:var(--ink-soft);
                     font-size:.8rem; background:rgba(255,255,255,.78);
@@ -919,7 +923,20 @@ with methods_tab:
     )
 
 st.divider()
-st.caption(
-    "Sources: U.S. EPA SDWIS, EPA Community Water System Service Areas v3.0, "
-    "U.S. Census Bureau ACS 2020–2024 and 2020 DHC, and MIT Election Lab, 2024 U.S. House election returns."
-)
+footer_brand, footer_sources = st.columns([1, 5], vertical_alignment="center")
+with footer_brand:
+    st.image(str(LOGO_PATH), width=110)
+    st.caption("Periphery Analytics")
+with footer_sources:
+    st.markdown(
+        """
+        <div class="footer-copy"><strong>Sources</strong><br>
+        <a href="https://echo.epa.gov/tools/data-downloads/sdwa-download-summary" target="_blank">U.S. EPA Safe Drinking Water Information System (SDWIS)</a> ·
+        <a href="https://www.epa.gov/ground-water-and-drinking-water/public-water-system-service-areas" target="_blank">EPA Public Water System Service Areas v3.0</a> ·
+        <a href="https://api.census.gov/data/2024/acs/acs5.html" target="_blank">U.S. Census Bureau 2020–2024 ACS five-year estimates</a> ·
+        <a href="https://www.census.gov/data/tables/2020/dec/2020-census-dhc.html" target="_blank">2020 Census Demographic and Housing Characteristics File</a> ·
+        <a href="https://electionlab.mit.edu/data" target="_blank">MIT Election Data and Science Lab, U.S. House 1976–2024</a>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
