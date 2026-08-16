@@ -12,6 +12,7 @@ import streamlit as st
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
 LOGO_PATH = APP_DIR / "assets" / "periphery_analytics_logo.png"
+FOOTER_LOGO_PATH = APP_DIR / "assets" / "periphery_analytics_wordmark.png"
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 STATE_NAMES = {
     "GA": "Georgia",
@@ -509,12 +510,9 @@ def show_map_legend(
 def show_footer() -> None:
     """Show the branded, linked source footer on every dashboard view."""
     st.divider()
-    footer_brand, footer_sources = st.columns(
-        [1, 5], vertical_alignment="center"
+    footer_sources, footer_brand = st.columns(
+        [5, 1.4], vertical_alignment="center"
     )
-    with footer_brand:
-        st.image(str(LOGO_PATH), width=110)
-        st.caption("Periphery Analytics")
     with footer_sources:
         st.markdown(
             """
@@ -528,6 +526,8 @@ def show_footer() -> None:
             """,
             unsafe_allow_html=True,
         )
+    with footer_brand:
+        st.image(str(FOOTER_LOGO_PATH), width=190)
 
 
 try:
