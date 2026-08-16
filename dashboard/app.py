@@ -23,27 +23,92 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      :root { --ink:#17324d; --blue:#1677a6; --aqua:#20a4a9; --sand:#f5f1e8; }
-      .stApp { background: #fbfcfd; color: var(--ink); }
+      :root {
+        --ink:#163247; --ink-soft:#526b7a; --blue:#176f91; --aqua:#198f91;
+        --aqua-soft:#dff1f0; --sand:#f5f0e5; --paper:#ffffff;
+        --canvas:#f6f9fa; --line:#dbe5e8;
+      }
+      html, body, [class*="css"] {
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      }
+      .stApp {
+        background:
+          radial-gradient(circle at 82% 0%, rgba(25,143,145,.07), transparent 26rem),
+          var(--canvas);
+        color:var(--ink);
+      }
       /* Increase this value to let the dashboard use more of a wide screen. */
-      .block-container { max-width: 1720px; padding-top: 2rem; padding-bottom: 3rem; }
-      .eyebrow { color:#1677a6; font-size:.78rem; font-weight:750; letter-spacing:.13em;
-                 text-transform:uppercase; margin-bottom:.35rem; }
-      .hero { background:linear-gradient(120deg,#eef8fb 0%,#f8fbfc 58%,#f7f2e8 100%);
-              border:1px solid #dce9ee; border-radius:18px; padding:1.35rem 1.5rem;
-              margin-bottom:1rem; }
-      .hero h1 { color:#12314a; font-size:2.15rem; line-height:1.08; margin:.1rem 0 .55rem; }
-      .hero p { color:#496273; max-width:850px; font-size:1.02rem; margin:0; }
-      [data-testid="stMetric"] { background:white; border:1px solid #dde7eb;
-        border-radius:14px; padding:.8rem 1rem; box-shadow:0 2px 10px rgba(23,50,77,.04); }
-      [data-testid="stMetricLabel"] { color:#536b7b; }
-      h2, h3 { color:#17324d; }
-      .note { color:#617583; font-size:.88rem; }
-      .source-box { background:#f5f7f8; border-left:4px solid #20a4a9;
-                    padding:.8rem 1rem; border-radius:5px; }
+      .block-container { max-width:1720px; padding-top:1.35rem; padding-bottom:3rem; }
+      [data-testid="stSidebar"] {
+        background:linear-gradient(180deg,#f0f6f7 0%,#f8faf9 65%,#f5f0e5 100%);
+        border-right:1px solid var(--line);
+      }
+      [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        padding-top:1.25rem;
+      }
+      [data-testid="stSidebar"] h2 {
+        font-size:1.15rem; letter-spacing:-.01em; margin-bottom:.8rem;
+      }
+      [data-testid="stSidebar"] hr { border-color:var(--line); margin:1.15rem 0; }
+      [data-testid="stSidebar"] details {
+        background:rgba(255,255,255,.62); border:1px solid var(--line);
+        border-radius:10px; padding:.1rem .65rem;
+      }
+      .eyebrow { color:var(--aqua); font-size:.74rem; font-weight:700;
+                 letter-spacing:.14em; text-transform:uppercase; margin-bottom:.45rem; }
+      .hero {
+        position:relative; overflow:hidden;
+        background:linear-gradient(125deg,#e5f4f3 0%,#f4f9f9 52%,#f4edde 100%);
+        border:1px solid #d5e5e5; border-radius:20px; padding:1.6rem 1.75rem;
+        margin-bottom:1.35rem; box-shadow:0 12px 32px rgba(22,50,71,.06);
+      }
+      .hero::after {
+        content:""; position:absolute; width:210px; height:210px; right:-72px;
+        top:-118px; border-radius:50%; border:32px solid rgba(25,143,145,.09);
+      }
+      .hero h1 { color:var(--ink); font-size:clamp(2rem,3vw,2.75rem);
+                 letter-spacing:-.035em; line-height:1.02; margin:.1rem 0 .65rem; }
+      .hero p { color:var(--ink-soft); max-width:820px; font-size:1.02rem;
+                line-height:1.55; margin:0; }
+      .district-heading { display:flex; align-items:flex-end; justify-content:space-between;
+                          flex-wrap:wrap; gap:.75rem; margin:.2rem 0 1rem; }
+      .district-heading h2 { margin:0; letter-spacing:-.025em; }
+      .district-meta { color:var(--ink-soft); font-size:.92rem; }
+      .party-tag { display:inline-block; background:var(--aqua-soft); color:var(--ink);
+                   border:1px solid #c5e2e0; border-radius:999px; padding:.25rem .6rem;
+                   font-size:.8rem; font-weight:600; }
+      [data-testid="stMetric"] {
+        background:rgba(255,255,255,.92); border:1px solid var(--line);
+        border-radius:14px; min-height:112px; padding:.9rem 1rem;
+        box-shadow:0 5px 16px rgba(22,50,71,.045);
+      }
+      [data-testid="stMetricLabel"] { color:var(--ink-soft); font-size:.82rem; }
+      [data-testid="stMetricValue"] { color:var(--ink); letter-spacing:-.025em; }
+      h1, h2, h3 { color:var(--ink); }
+      .note { color:var(--ink-soft); font-size:.88rem; }
+      .source-box { background:linear-gradient(135deg,#eef7f6,#f8fbfa);
+                    border:1px solid #d5e7e5; border-left:4px solid var(--aqua);
+                    padding:.9rem 1rem; border-radius:10px; line-height:1.5; }
+      .instruction { display:flex; gap:.7rem; align-items:center; color:var(--ink-soft);
+                     background:rgba(255,255,255,.82); border:1px solid var(--line);
+                     border-radius:12px; padding:.7rem .85rem; margin:.2rem 0 .85rem; }
+      .step-dot { display:inline-grid; place-items:center; flex:0 0 26px; height:26px;
+                  border-radius:50%; background:var(--aqua); color:white;
+                  font-size:.78rem; font-weight:700; }
+      [data-testid="stAlert"] { border-radius:12px; border:1px solid #d6e5e8; }
+      [data-testid="stDeckGlJsonChart"] {
+        border:1px solid var(--line); border-radius:16px; overflow:hidden;
+        box-shadow:0 8px 24px rgba(22,50,71,.07);
+      }
+      [data-baseweb="tab-list"] { gap:.25rem; border-bottom:1px solid var(--line); }
+      [data-baseweb="tab"] { padding:.65rem .9rem; }
+      [data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:12px;
+                                     overflow:hidden; }
       .map-legend { display:flex; flex-wrap:wrap; gap:.45rem 1rem; align-items:center;
-                    margin:.55rem 0 .2rem; color:#496273; font-size:.82rem; }
-      .map-legend-title { color:#17324d; font-weight:700; margin-right:.1rem; }
+                    margin:.6rem 0 .3rem; padding:.55rem .7rem; color:var(--ink-soft);
+                    font-size:.8rem; background:rgba(255,255,255,.78);
+                    border:1px solid var(--line); border-radius:10px; }
+      .map-legend-title { color:var(--ink); font-weight:700; margin-right:.1rem; }
       .legend-item { display:inline-flex; align-items:center; gap:.35rem; }
       .legend-swatch { display:inline-block; width:16px; height:12px; border-radius:2px; }
       .legend-point { width:10px; height:10px; border-radius:50%; background:#cc202f;
@@ -52,6 +117,13 @@ st.markdown(
                          background:transparent; }
       .legend-service { background:rgba(20,145,170,.35); border:2px solid #11708e; }
       .legend-vulnerable { background:rgba(176,35,42,.72); border:1px solid #6c0f18; }
+      @media (max-width: 760px) {
+        .block-container { padding-top:.8rem; }
+        .hero { padding:1.2rem; border-radius:15px; }
+        .hero h1 { font-size:2rem; }
+        .district-heading { align-items:flex-start; flex-direction:column; }
+        .map-legend { gap:.4rem .7rem; }
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -491,19 +563,24 @@ with st.sidebar:
         )
 
     st.divider()
-    st.caption(
-        "Analysis by Jose M. Macias III of Periphery Analytics. Data sources: "
-        "U.S. EPA SDWIS and U.S. Census Bureau American Community Survey "
-        "five-year estimates. Geocoded CWS administrative points are based on "
-        "contact addresses reported to EPA and may contain positional errors; "
-        "they do not necessarily represent physical infrastructure locations."
-    )
+    with st.expander("Sources & location note"):
+        st.caption(
+            "Analysis by Jose M. Macias III of Periphery Analytics. Data sources: "
+            "U.S. EPA SDWIS and U.S. Census Bureau American Community Survey "
+            "five-year estimates. Geocoded CWS administrative points are based on "
+            "contact addresses reported to EPA and may contain positional errors; "
+            "they do not necessarily represent physical infrastructure locations."
+        )
 
 
 if not selected_state:
-    st.info(
-        "Start by selecting a state from the sidebar. The statewide water-system "
-        "map will appear first; then select a congressional district for details."
+    st.markdown(
+        """
+        <div class="instruction"><span class="step-dot">1</span><span>
+        Select a state in the sidebar to open its statewide water-system map.
+        You can then choose a congressional district for a closer look.</span></div>
+        """,
+        unsafe_allow_html=True,
     )
     blank_deck = pdk.Deck(
         layers=[],
@@ -548,10 +625,17 @@ if not selected_district:
         )
     ].drop_duplicates(subset=["pwsid"])
 
-    st.subheader(f"{selected_state} statewide view")
-    st.info(
-        "Now select a congressional district from the sidebar to zoom in and "
-        "open its infrastructure and community profile."
+    st.markdown(
+        f'<div class="eyebrow">Statewide exploration</div><h2>{selected_state} water systems</h2>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="instruction"><span class="step-dot">2</span><span>
+        Select a congressional district in the sidebar to open its infrastructure
+        and community profile.</span></div>
+        """,
+        unsafe_allow_html=True,
     )
     state_layers = map_layers(
         selected_state_communities,
@@ -601,9 +685,20 @@ selected_service_geo = add_geojson_tooltips(selected_service_geo, "service_area"
 selected_communities_geo = add_geojson_tooltips(selected_communities_geo, "community")
 selected_vulnerable_geo = add_geojson_tooltips(selected_vulnerable_geo, "community")
 
-st.subheader(f"{selected_district}: {district_row['NAME']}")
-st.caption(
-    f"Representative: {district_row['candidate']} ({str(district_row['party']).title()})"
+st.markdown(
+    f"""
+    <div class="district-heading">
+      <div>
+        <div class="eyebrow">Congressional district profile</div>
+        <h2>{selected_district}: {district_row['NAME']}</h2>
+      </div>
+      <div class="district-meta">
+        Representative&nbsp; <strong>{district_row['candidate']}</strong>&nbsp;
+        <span class="party-tag">{str(district_row['party']).title()}</span>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 metric_cols = st.columns(5)
