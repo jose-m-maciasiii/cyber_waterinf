@@ -256,40 +256,31 @@ def add_geojson_tooltips(
         if layer_type == "service_area":
             properties.update(
                 tooltip_title=str(properties.get("pws_name") or "Water system"),
-                tooltip_line_1=(
-                    f"<b>PWSID:</b> {properties.get('pwsid') or 'Not available'}"
+                tooltip_label_1="PWSID",
+                tooltip_value_1=str(properties.get("pwsid") or "Not available"),
+                tooltip_label_2="Population served",
+                tooltip_value_2=number(properties.get("population_served_count")),
+                tooltip_label_3="Service-area source",
+                tooltip_value_3=str(
+                    properties.get("symbology_field") or "Not available"
                 ),
-                tooltip_line_2=(
-                    "<b>Population served:</b> "
-                    f"{number(properties.get('population_served_count'))}"
-                ),
-                tooltip_line_3=(
-                    "<b>Service-area source:</b> "
-                    f"{properties.get('symbology_field') or 'Not available'}"
-                ),
-                tooltip_line_4=(
-                    "<b>Model method:</b> "
-                    f"{properties.get('model_method') or 'Not available'}"
-                ),
+                tooltip_label_4="Model method",
+                tooltip_value_4=str(properties.get("model_method") or "Not available"),
             )
         else:
             properties.update(
                 tooltip_title=str(properties.get("NAME") or "Census block group"),
-                tooltip_line_1=(
-                    "<b>Poverty rate:</b> "
-                    f"{percent(properties.get('poverty_rate'))}"
+                tooltip_label_1="Poverty rate",
+                tooltip_value_1=percent(properties.get("poverty_rate")),
+                tooltip_label_2="Median household income",
+                tooltip_value_2=money(properties.get("median_household_income")),
+                tooltip_label_3="Estimated population served",
+                tooltip_value_3=number(
+                    properties.get("estimated_cws_service_population")
                 ),
-                tooltip_line_2=(
-                    "<b>Median household income:</b> "
-                    f"{money(properties.get('median_household_income'))}"
-                ),
-                tooltip_line_3=(
-                    "<b>Estimated population served:</b> "
-                    f"{number(properties.get('estimated_cws_service_population'))}"
-                ),
-                tooltip_line_4=(
-                    "<b>Rural status:</b> "
-                    f"{properties.get('rural_status') or 'Not available'}"
+                tooltip_label_4="Rural status",
+                tooltip_value_4=str(
+                    properties.get("rural_status") or "Not available"
                 ),
             )
     return data
@@ -385,18 +376,21 @@ def map_layers(
     point_data = water_systems.dropna(subset=["latitude", "longitude"]).copy()
     if not point_data.empty:
         point_data["tooltip_title"] = point_data["pws_name"].fillna("Water system")
-        point_data["tooltip_line_1"] = (
-            "<b>PWSID:</b> "
-            + point_data["pwsid"].fillna("Not available").astype(str)
+        point_data["tooltip_label_1"] = "PWSID"
+        point_data["tooltip_value_1"] = point_data["pwsid"].fillna(
+            "Not available"
+        ).astype(str)
+        point_data["tooltip_label_2"] = "Population served"
+        point_data["tooltip_value_2"] = point_data["population_served_count"].map(
+            number
         )
-        point_data["tooltip_line_2"] = point_data["population_served_count"].map(
-            lambda value: f"<b>Population served:</b> {number(value)}"
+        point_data["tooltip_label_3"] = "Active components"
+        point_data["tooltip_value_3"] = point_data["active_component_count"].map(
+            number
         )
-        point_data["tooltip_line_3"] = point_data["active_component_count"].map(
-            lambda value: f"<b>Active components:</b> {number(value)}"
-        )
-        point_data["tooltip_line_4"] = point_data["primary_source_code"].map(
-            lambda value: f"<b>Primary source:</b> {source_label(value)}"
+        point_data["tooltip_label_4"] = "Primary source"
+        point_data["tooltip_value_4"] = point_data["primary_source_code"].map(
+            source_label
         )
         layers.append(
             pdk.Layer(
@@ -419,10 +413,10 @@ def map_layers(
 MAP_TOOLTIP = {
     "html": (
         "<b>{tooltip_title}</b><br/>"
-        "{tooltip_line_1}<br/>"
-        "{tooltip_line_2}<br/>"
-        "{tooltip_line_3}<br/>"
-        "{tooltip_line_4}"
+        "<b>{tooltip_label_1}:</b> {tooltip_value_1}<br/>"
+        "<b>{tooltip_label_2}:</b> {tooltip_value_2}<br/>"
+        "<b>{tooltip_label_3}:</b> {tooltip_value_3}<br/>"
+        "<b>{tooltip_label_4}:</b> {tooltip_value_4}"
     ),
     "style": {"backgroundColor": "#17324d", "color": "white"},
 }
@@ -438,9 +432,12 @@ def show_selected_map_feature(map_event: Any) -> None:
     if selected_object:
         selected_properties = selected_object.get("properties", selected_object)
         detail_lines = "<br/>".join(
-            str(selected_properties.get(f"tooltip_line_{index}", ""))
+            "<strong>"
+            f"{selected_properties.get(f'tooltip_label_{index}', '')}:"
+            "</strong> "
+            f"{selected_properties.get(f'tooltip_value_{index}', '')}"
             for index in range(1, 5)
-            if selected_properties.get(f"tooltip_line_{index}")
+            if selected_properties.get(f"tooltip_label_{index}")
         )
         st.markdown(
             "<div class='source-box'><strong>Selected map feature</strong><br/>"
