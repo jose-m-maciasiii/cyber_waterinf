@@ -276,24 +276,6 @@ administrative address or modeled service polygon. Users should consult the
 relevant water utility, state primacy agency, EPA, or emergency-management
 authority for operational, regulatory, or safety questions.
 
-## Suggested repository additions
-
-The repository does not yet include several files commonly expected in a public
-data project. Recommended next additions are:
-
-- a `LICENSE` covering source code and a separate note clarifying that upstream
-  government and election datasets retain their own terms;
-- a `CITATION.cff` with author, project title, repository URL, and release date;
-- a versioned release or changelog recording the SDWIS quarter, ACS vintage,
-  election version, and service-area version used for each dashboard update;
-- a machine-readable data dictionary for every published CSV;
-- automated checks for expected columns, unique identifiers, missing geometry,
-  and county/district coverage;
-- a reproducible R dependency lockfile, such as `renv.lock`;
-- a contribution guide and issue templates; and
-- archived summary outputs or checksums so published commentary can be tied to
-  an exact data release.
-
 ## Feedback
 
 Questions, corrections, and reproducibility issues can be submitted through the
