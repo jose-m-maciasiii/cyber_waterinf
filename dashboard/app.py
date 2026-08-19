@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -14,12 +16,41 @@ DATA_DIR = APP_DIR / "data"
 LOGO_PATH = APP_DIR / "assets" / "periphery_analytics_logo.png"
 FOOTER_LOGO_PATH = APP_DIR / "assets" / "periphery_analytics_wordmark.png"
 MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+DEFAULT_PMTILES_URL = (
+    "https://storage.googleapis.com/water-system-maps/"
+    "water_infrastructure.pmtiles"
+)
+PMTILES_MAP_STYLE = {
+    "version": 8,
+    "sources": {},
+    "layers": [
+        {
+            "id": "map-background",
+            "type": "background",
+            "paint": {"background-color": "#edf1f3"},
+        }
+    ],
+}
+PMTILES_COMPONENT = components.declare_component(
+    "pmtiles_map",
+    path=str(APP_DIR / "pmtiles_component"),
+)
 STATE_NAMES = {
-    "GA": "Georgia",
-    "MI": "Michigan",
-    "MN": "Minnesota",
-    "NJ": "New Jersey",
-    "SD": "South Dakota",
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut",
+    "DE": "Delaware", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii",
+    "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine",
+    "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan",
+    "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri",
+    "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico",
+    "NY": "New York", "NC": "North Carolina", "ND": "North Dakota",
+    "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon",
+    "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
 }
 
 
@@ -86,6 +117,9 @@ st.markdown(
       .party-tag { display:inline-block; background:var(--aqua-soft); color:var(--ink);
                    border:1px solid #c5e2e0; border-radius:999px; padding:.25rem .6rem;
                    font-size:.8rem; font-weight:600; }
+      .party-republican { background:#fde8e7; color:#a51d24; border-color:#efb9b8; }
+      .party-democrat { background:#e7f0fc; color:#1858a8; border-color:#b8d0ef; }
+      .party-multiple { background:#f0e8fa; color:#69369b; border-color:#d2b9e9; }
       [data-testid="stMetric"] {
         background:rgba(255,255,255,.92); border:1px solid var(--line);
         border-radius:14px; min-height:112px; padding:.9rem 1rem;
@@ -117,6 +151,18 @@ st.markdown(
       .footer-copy strong { color:var(--ink); }
       .footer-copy a { color:var(--blue); text-decoration:none; }
       .footer-copy a:hover { text-decoration:underline; }
+      .social-links { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem;
+                      margin:.55rem 0 .85rem; }
+      .social-link { display:inline-flex; align-items:center; gap:.35rem; padding:.28rem .52rem;
+                     color:var(--ink)!important; background:#fff; border:1px solid var(--line);
+                     border-radius:999px; font-size:.78rem; font-weight:600; text-decoration:none!important; }
+      .social-link:hover { border-color:var(--aqua); background:#eef7f6; }
+      .social-icon { display:inline-grid; place-items:center; width:20px; height:20px;
+                     border-radius:50%; color:#fff; font-size:.72rem; font-weight:800; line-height:1; }
+      .social-linkedin { background:#0a66c2; }
+      .social-x { background:#111; }
+      .social-bluesky { background:#1185fe; }
+      .social-substack { background:#ff6719; }
       .map-legend { display:flex; flex-wrap:wrap; gap:.45rem 1rem; align-items:center;
                     margin:.6rem 0 .3rem; padding:.55rem .7rem; color:var(--ink-soft);
                     font-size:.8rem; background:rgba(255,255,255,.78);
@@ -130,6 +176,14 @@ st.markdown(
                          background:transparent; }
       .legend-service { background:rgba(20,145,170,.35); border:2px solid #11708e; }
       .legend-vulnerable { background:rgba(176,35,42,.72); border:1px solid #6c0f18; }
+      .legend-vulnerable-hatch {
+        background-color:#fff;
+        background-image:
+          linear-gradient(45deg, transparent 42%, #111 42% 54%, transparent 54%),
+          linear-gradient(-45deg, transparent 42%, #111 42% 54%, transparent 54%);
+        background-size:8px 8px;
+        border:1px solid #111111;
+      }
       @media (max-width: 760px) {
         .block-container { padding-top:.8rem; }
         .hero { padding:1.2rem; border-radius:15px; }
@@ -244,15 +298,412 @@ def map_view(feature_collection: dict[str, Any]) -> pdk.ViewState:
     if not pairs:
         return pdk.ViewState(latitude=39.5, longitude=-96.5, zoom=3.3)
     longitudes, latitudes = zip(*pairs)
-    lon_span = max(longitudes) - min(longitudes)
+    adjusted_longitudes = list(longitudes)
+    if max(longitudes) - min(longitudes) > 180:
+        # Treat coordinates on either side of the antimeridian as neighbors.
+        adjusted_longitudes = [
+            longitude + 360 if longitude < 0 else longitude
+            for longitude in longitudes
+        ]
+    lon_span = max(adjusted_longitudes) - min(adjusted_longitudes)
     lat_span = max(latitudes) - min(latitudes)
     span = max(lon_span, lat_span, 0.02)
     zoom = max(5.0, min(11.5, 8.5 - (span - 0.2) * 1.15))
+    center_longitude = (
+        min(adjusted_longitudes) + max(adjusted_longitudes)
+    ) / 2
+    if center_longitude > 180:
+        center_longitude -= 360
     return pdk.ViewState(
         latitude=(min(latitudes) + max(latitudes)) / 2,
-        longitude=(min(longitudes) + max(longitudes)) / 2,
+        longitude=center_longitude,
         zoom=zoom,
         pitch=0,
+    )
+
+
+def render_pmtiles_map_legacy(
+    boundary_geo: dict[str, Any],
+    state_code: str,
+    analysis_level: str,
+    selected_area: Optional[str],
+    census_variable: Optional[str],
+    show_vulnerable: bool,
+    height: int = 650,
+) -> None:
+    """Render the local/hosted PMTiles archive with MapLibre GL JS."""
+    view = map_view(boundary_geo)
+    pmtiles_url = os.getenv("PMTILES_URL", DEFAULT_PMTILES_URL)
+    tile_template = os.getenv("PMTILES_TILE_URL")
+    geography_property = (
+        "congressional_district"
+        if analysis_level == "Congressional district"
+        else "county_geoid"
+    )
+    boundary_layer = (
+        "congressional_districts"
+        if analysis_level == "Congressional district"
+        else "counties"
+    )
+    service_layer = (
+        "cws_service_areas"
+        if analysis_level == "Congressional district"
+        else "county_cws_service_areas"
+    )
+    geography_filter: list[Any] = [
+        "==", ["get", "state_po"], state_code
+    ]
+    if selected_area:
+        geography_filter = [
+            "==",
+            ["to-string", ["get", geography_property]],
+            str(selected_area),
+        ]
+
+    census_colors = {
+        "Poverty rate": [
+            "step", ["coalesce", ["get", "poverty_rate"], -1],
+            "rgba(180,180,180,0.25)", 0, "rgba(255,255,178,0.55)",
+            10, "rgba(254,204,92,0.65)", 20, "rgba(253,141,60,0.68)",
+            30, "rgba(227,26,28,0.75)",
+        ],
+        "Median household income": [
+            "step", ["coalesce", ["get", "median_household_income"], -1],
+            "rgba(180,180,180,0.25)", 0, "rgba(196,230,195,0.55)",
+            40000, "rgba(109,188,144,0.65)",
+            60000, "rgba(54,135,122,0.68)",
+            90000, "rgba(29,79,96,0.75)",
+        ],
+        "Rural population share": [
+            "step", ["coalesce", ["get", "rural_share"], -1],
+            "rgba(180,180,180,0.25)", 0, "rgba(255,255,204,0.55)",
+            0.000001, "rgba(194,230,153,0.65)",
+            0.5, "rgba(120,198,121,0.68)",
+            1, "rgba(35,132,67,0.75)",
+        ],
+    }
+    config = {
+        "url": pmtiles_url,
+        "tileTemplate": tile_template,
+        "style": PMTILES_MAP_STYLE,
+        "center": [view.longitude, view.latitude],
+        "zoom": view.zoom,
+        "filter": geography_filter,
+        "boundaryLayer": boundary_layer,
+        "serviceLayer": service_layer,
+        "censusColor": census_colors.get(census_variable),
+        "showVulnerable": show_vulnerable,
+        "selectedHighlight": (
+            st.session_state.get(key, {}).get("highlight")
+            if isinstance(st.session_state.get(key), dict)
+            else None
+        ),
+    }
+    config_json = json.dumps(config).replace("</", "<\\/")
+    html = f"""
+    <!doctype html>
+    <html><head><meta charset="utf-8">
+      <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.0.0/dist/maplibre-gl.css">
+      <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+      <style>
+        html,body{{margin:0;width:100%;font-family:Arial,sans-serif}}
+        #map-wrap{{position:relative;width:100%;height:{height}px}}
+        #map{{width:100%;height:100%;border-radius:14px;overflow:hidden}}
+        #status{{position:absolute;z-index:5;left:12px;top:12px;padding:8px 11px;
+          border-radius:7px;background:rgba(255,255,255,.94);color:#334155;
+          box-shadow:0 1px 5px rgba(0,0,0,.18);font-size:13px}}
+        #details-region{{box-sizing:border-box;width:100%;height:178px;padding-top:12px;
+          overflow:hidden}}
+        #selection{{display:none;position:relative;box-sizing:border-box;width:100%;
+          max-height:166px;overflow:auto;padding:16px 42px 16px 18px;border:1px solid #d5e5e5;
+          border-radius:10px;background:#f7fbfb;color:#334155;font-size:14px;
+          line-height:1.55}}
+        #selection.active{{display:block}}
+        #selection-prompt{{padding:4px 2px;color:#64748b;font-size:13px}}
+        #selection-title{{display:block;color:#142a3d;font-size:14px;margin:2px 0 5px}}
+        #selection-close{{position:absolute;right:8px;top:7px;border:0;background:transparent;
+          color:#64748b;font-size:18px;line-height:1;cursor:pointer}}
+        .selection-eyebrow{{color:#64748b;font-size:10px;font-weight:700;
+          letter-spacing:.08em;text-transform:uppercase}}
+        .error{{padding:1rem;color:#7a2027;background:#fff3f3}}
+        .maplibregl-popup-content{{max-width:330px;line-height:1.5;color:#243746}}
+      </style>
+    </head><body><div id="map-wrap"><div id="status">Loading map…</div><div id="map"></div></div>
+    <div id="details-region">
+      <div id="selection-prompt">Click a service area, block group, or point to keep its details visible.</div>
+      <div id="selection"><button id="selection-close" aria-label="Close">×</button>
+        <span class="selection-eyebrow">Selected map feature</span>
+        <strong id="selection-title"></strong><div id="selection-details"></div>
+      </div>
+    </div>
+    <script type="module">
+      import * as maplibregl from "https://unpkg.com/maplibre-gl@6.0.0/dist/maplibre-gl.mjs";
+      const cfg = {config_json};
+      const status = document.getElementById("status");
+      const selection = document.getElementById("selection");
+      const selectionPrompt = document.getElementById("selection-prompt");
+      const selectionTitle = document.getElementById("selection-title");
+      const selectionDetails = document.getElementById("selection-details");
+      document.getElementById("selection-close").addEventListener("click", e => {{
+        e.stopPropagation();
+        selection.classList.remove("active");
+        selectionPrompt.style.display = "block";
+      }});
+      const escapeHtml = value => String(value).replace(/[&<>'"]/g, character => ({{
+        "&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"
+      }})[character]);
+      const validNumber = value => value !== undefined && value !== null &&
+        value !== "" && Number.isFinite(Number(value));
+      const formatNumber = value => validNumber(value)
+        ? Math.round(Number(value)).toLocaleString() : null;
+      const formatMoney = value => validNumber(value)
+        ? `$${{Math.round(Number(value)).toLocaleString()}}` : null;
+      const formatPercent = value => validNumber(value)
+        ? `${{Number(value).toFixed(1)}}%` : null;
+      const featurePresentation = feature => {{
+        const p = feature.properties || {{}};
+        const title = p.tooltip_title || p.pws_name || p.NAME || p.name ||
+          p.county_name || "Map feature";
+        let labels = [
+          ["PWSID",p.pwsid],
+          ["Population served",formatNumber(p.population_served_count)],
+          ["Active components",formatNumber(p.active_component_count)],
+          ["Primary source",p.primary_source_code],
+          ["Poverty rate",formatPercent(p.poverty_rate)],
+          ["Median household income",formatMoney(p.median_household_income)],
+          ["Estimated population served",formatNumber(p.estimated_cws_service_population)],
+          ["Rural status",p.rural_status]
+        ].filter(x => x[1] !== undefined && x[1] !== null && x[1] !== "");
+        if (!labels.length) {{
+          labels = [1,2,3,4].map(index => [
+            p[`tooltip_label_${{index}}`], p[`tooltip_value_${{index}}`]
+          ]).filter(x => x[0] && x[1] !== undefined && x[1] !== null && x[1] !== "");
+        }}
+        const body = labels.map(x =>
+          `<b>${{escapeHtml(x[0])}}:</b> ${{escapeHtml(x[1])}}`
+        ).join("<br>");
+        return {{title, body}};
+      }};
+      window.addEventListener("error", e => {{
+        status.textContent = `Map error: ${{e.message || "unknown browser error"}}`;
+        status.className = "error";
+      }});
+      const protocol = new pmtiles.Protocol();
+      maplibregl.addProtocol("pmtiles", protocol.tile);
+      const archive = new pmtiles.PMTiles(cfg.url);
+      protocol.add(archive);
+      const interactive = [];
+      cfg.style.sources.water = cfg.tileTemplate
+        ? {{type:"vector",tiles:[cfg.tileTemplate],minzoom:0,maxzoom:14}}
+        : {{type:"vector",url:`pmtiles://${{cfg.url}}`}};
+      if (cfg.censusColor) {{
+          cfg.style.layers.push({{id:"census-fill",type:"fill",source:"water",
+            "source-layer":"all_block_groups",filter:cfg.filter,
+            paint:{{"fill-color":cfg.censusColor,"fill-outline-color":"rgba(255,255,255,.55)"}}}});
+          interactive.push("census-fill");
+      }}
+      if (cfg.showVulnerable) {{
+          cfg.style.layers.push({{id:"vulnerable-fill",type:"fill",source:"water",
+            "source-layer":"vulnerable_block_groups",filter:cfg.filter,
+            paint:{{"fill-color":"rgba(0,0,0,0)","fill-outline-color":"#111111"}}}});
+          interactive.push("vulnerable-fill");
+      }}
+      cfg.style.layers.push({{id:"service",type:"fill",source:"water",
+          "source-layer":cfg.serviceLayer,filter:cfg.filter,
+          paint:{{"fill-color":"rgba(20,145,170,.28)","fill-outline-color":"#11708e"}}}});
+      interactive.push("service");
+      cfg.style.layers.push({{id:"boundary",type:"line",source:"water",
+          "source-layer":cfg.boundaryLayer,filter:cfg.filter,
+          paint:{{"line-color":"#142a3d","line-width":3.5}}}});
+      cfg.style.layers.push({{id:"admin-points",type:"circle",source:"water",
+          "source-layer":"administrative_points",filter:cfg.filter,
+          paint:{{"circle-radius":["interpolate",["linear"],["zoom"],3,1.75,7,3,12,4.5],
+          "circle-color":"#095b6c",
+          "circle-stroke-color":"#0f191e","circle-stroke-width":1.3}}}});
+      interactive.push("admin-points");
+      const map = new maplibregl.Map({{
+        container:"map", style:cfg.style, center:cfg.center, zoom:cfg.zoom
+      }});
+      window.map = map;
+      window.cfg = cfg;
+      map.addControl(new maplibregl.NavigationControl(), "top-right");
+      requestAnimationFrame(() => map.resize());
+      setTimeout(() => map.resize(), 250);
+      setTimeout(() => map.resize(), 1000);
+      new ResizeObserver(() => map.resize()).observe(document.getElementById("map"));
+      map.on("load", () => {{
+        status.remove();
+        if (cfg.showVulnerable) {{
+          const hatchCanvas = document.createElement("canvas");
+          hatchCanvas.width = 18;
+          hatchCanvas.height = 18;
+          const hatchContext = hatchCanvas.getContext("2d");
+          hatchContext.strokeStyle = "rgba(17,17,17,.82)";
+          hatchContext.lineWidth = 1.6;
+          hatchContext.beginPath();
+          hatchContext.moveTo(9, 2);
+          hatchContext.lineTo(16, 9);
+          hatchContext.lineTo(9, 16);
+          hatchContext.lineTo(2, 9);
+          hatchContext.closePath();
+          hatchContext.stroke();
+          map.addImage(
+            "vulnerable-hatch",
+            hatchContext.getImageData(0, 0, 18, 18),
+            {{pixelRatio:2}}
+          );
+          map.setPaintProperty("vulnerable-fill", "fill-pattern", "vulnerable-hatch");
+        }}
+        const firstThematicLayer = cfg.censusColor
+          ? "census-fill"
+          : (cfg.showVulnerable ? "vulnerable-fill" : "service");
+        map.addSource("carto-positron", {{
+          type:"raster",
+          tiles:["https://a.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png"],
+          tileSize:256,
+          attribution:"© OpenStreetMap contributors © CARTO"
+        }});
+        map.addLayer({{
+          id:"carto-positron",type:"raster",source:"carto-positron"
+        }}, firstThematicLayer);
+      }});
+      const interactionPriority = [
+        "admin-points", "vulnerable-fill", "census-fill", "service"
+      ];
+      const featureAt = point => {{
+        for (const layerId of interactionPriority) {{
+          if (!map.getLayer(layerId)) continue;
+          const features = map.queryRenderedFeatures(point, {{layers:[layerId]}});
+          if (features.length) return features[0];
+        }}
+        return null;
+      }};
+      const hoverPopup = new maplibregl.Popup({{
+        closeButton:false, closeOnClick:false, offset:10
+      }});
+      map.on("click", e => {{
+        const feature = featureAt(e.point);
+        if (!feature) return;
+        const {{title, body}} = featurePresentation(feature);
+        selectionTitle.textContent = title;
+        selectionDetails.innerHTML = body;
+        selectionPrompt.style.display = "none";
+        selection.classList.add("active");
+      }});
+      map.on("mousemove", e => {{
+        const feature = featureAt(e.point);
+        map.getCanvas().style.cursor = feature ? "pointer" : "";
+        if (!feature) {{
+          hoverPopup.remove();
+          return;
+        }}
+        const {{title, body}} = featurePresentation(feature);
+        hoverPopup.setLngLat(e.lngLat).setHTML(
+          `<b>${{escapeHtml(title)}}</b>${{body ? "<br>" + body : ""}}`
+        ).addTo(map);
+      }});
+      map.on("mouseout", () => hoverPopup.remove());
+      map.on("error", e => {{
+        if (e.error) {{
+          console.error("PMTiles map error", e.error);
+          status.textContent = `Map error: ${{e.error.message || e.error}}`;
+          status.className = "error";
+        }}
+      }});
+    </script></body></html>
+    """
+    components.html(html, height=height + 190, scrolling=False)
+
+
+def render_pmtiles_map(
+    boundary_geo: dict[str, Any],
+    state_code: str,
+    analysis_level: str,
+    selected_area: Optional[str],
+    census_variable: Optional[str],
+    show_vulnerable: bool,
+    key: str,
+    height: int = 650,
+) -> Optional[dict[str, Any]]:
+    """Render PMTiles and return the clicked feature to Streamlit."""
+    view = map_view(boundary_geo)
+    geography_property = (
+        "congressional_district"
+        if analysis_level == "Congressional district"
+        else "county_geoid"
+    )
+    boundary_layer = (
+        "congressional_districts"
+        if analysis_level == "Congressional district"
+        else "counties"
+    )
+    service_layer = (
+        "cws_service_areas"
+        if analysis_level == "Congressional district"
+        else "county_cws_service_areas"
+    )
+    geography_filter: list[Any] = ["==", ["get", "state_po"], state_code]
+    if selected_area:
+        geography_filter = [
+            "==",
+            ["to-string", ["get", geography_property]],
+            str(selected_area),
+        ]
+
+    census_colors = {
+        "Poverty rate": [
+            "step", ["coalesce", ["get", "poverty_rate"], -1],
+            "rgba(180,180,180,0.25)", 0, "rgba(255,255,178,0.55)",
+            10, "rgba(254,204,92,0.65)", 20, "rgba(253,141,60,0.68)",
+            30, "rgba(227,26,28,0.75)",
+        ],
+        "Median household income": [
+            "step", ["coalesce", ["get", "median_household_income"], -1],
+            "rgba(180,180,180,0.25)", 0, "rgba(196,230,195,0.55)",
+            40000, "rgba(109,188,144,0.65)",
+            60000, "rgba(54,135,122,0.68)",
+            90000, "rgba(29,79,96,0.75)",
+        ],
+        "Rural population share": [
+            "step", ["coalesce", ["get", "rural_share"], -1],
+            "rgba(180,180,180,0.25)", 0, "rgba(255,255,204,0.55)",
+            0.000001, "rgba(194,230,153,0.65)",
+            0.5, "rgba(120,198,121,0.68)",
+            1, "rgba(35,132,67,0.75)",
+        ],
+    }
+    config = {
+        "url": os.getenv("PMTILES_URL", DEFAULT_PMTILES_URL),
+        "tileTemplate": os.getenv("PMTILES_TILE_URL"),
+        "style": PMTILES_MAP_STYLE,
+        "center": [view.longitude, view.latitude],
+        "zoom": view.zoom,
+        "filter": geography_filter,
+        "boundaryLayer": boundary_layer,
+        "serviceLayer": service_layer,
+        "censusColor": census_colors.get(census_variable),
+        "showVulnerable": show_vulnerable,
+    }
+    return PMTILES_COMPONENT(
+        config=config,
+        height=height,
+        default=None,
+        key=key,
+    )
+
+
+def pmtiles_error(selection: Optional[dict[str, Any]]) -> Optional[str]:
+    """Return a component-reported fatal PMTiles error, when present."""
+    if isinstance(selection, dict) and selection.get("error"):
+        return str(selection["error"])
+    return None
+
+
+def show_pmtiles_fallback_notice(error: str) -> None:
+    """Explain why the lighter production renderer was replaced."""
+    st.warning(
+        "The streamed map could not be loaded, so this view is using the "
+        f"GeoJSON fallback. PMTiles error: {error}"
     )
 
 
@@ -291,6 +742,18 @@ def source_label(value: Any) -> str:
         "GUP": "Purchased ground water under the influence of surface water (GUP)",
     }
     return labels.get(code, code)
+
+
+def party_tag_class(value: Any) -> str:
+    """Return the display class for a single- or multi-party label."""
+    party = str(value).upper()
+    if "/" in party:
+        return "party-multiple"
+    if "REPUBLICAN" in party:
+        return "party-republican"
+    if "DEMOCRAT" in party:
+        return "party-democrat"
+    return ""
 
 
 def add_geojson_tooltips(
@@ -345,24 +808,24 @@ def map_layers(
     census_fills = {
         "Poverty rate": (
             "properties.poverty_rate == null ? [180,180,180,55] : "
-            "properties.poverty_rate >= 30 ? [153,27,30,120] : "
-            "properties.poverty_rate >= 20 ? [230,85,13,105] : "
-            "properties.poverty_rate >= 10 ? [253,174,107,90] : "
-            "[255,237,160,75]"
+            "properties.poverty_rate >= 30 ? [227,26,28,120] : "
+            "properties.poverty_rate >= 20 ? [253,141,60,105] : "
+            "properties.poverty_rate >= 10 ? [254,204,92,90] : "
+            "[255,255,178,75]"
         ),
         "Median household income": (
             "properties.median_household_income == null ? [180,180,180,55] : "
-            "properties.median_household_income >= 90000 ? [8,81,156,120] : "
-            "properties.median_household_income >= 60000 ? [49,130,189,105] : "
-            "properties.median_household_income >= 40000 ? [107,174,214,90] : "
-            "[198,219,239,75]"
+            "properties.median_household_income >= 90000 ? [29,79,96,120] : "
+            "properties.median_household_income >= 60000 ? [54,135,122,105] : "
+            "properties.median_household_income >= 40000 ? [109,188,144,90] : "
+            "[196,230,195,75]"
         ),
         "Rural population share": (
             "properties.rural_share == null ? [180,180,180,55] : "
-            "properties.rural_share >= 1 ? [0,90,50,120] : "
-            "properties.rural_share >= 0.5 ? [49,163,84,105] : "
-            "properties.rural_share > 0 ? [161,217,155,90] : "
-            "[237,248,233,75]"
+            "properties.rural_share >= 1 ? [35,132,67,120] : "
+            "properties.rural_share >= 0.5 ? [120,198,121,105] : "
+            "properties.rural_share > 0 ? [194,230,153,90] : "
+            "[255,255,204,75]"
         ),
     }
     layers: list[pdk.Layer] = []
@@ -444,9 +907,9 @@ def map_layers(
                 point_data,
                 id="administrative-points",
                 get_position="[longitude, latitude]",
-                get_radius=90,
-                radius_min_pixels=3,
-                radius_max_pixels=8,
+                get_radius=70,
+                radius_min_pixels=2,
+                radius_max_pixels=5,
                 get_fill_color=[9, 91, 108, 235],
                 get_line_color=[15, 25, 30, 255],
                 line_width_min_pixels=1.5,
@@ -468,13 +931,8 @@ MAP_TOOLTIP = {
 }
 
 
-def show_selected_map_feature(map_event: Any) -> None:
-    """Show the most recently clicked feature below a map."""
-    selected_objects = map_event.selection.get("objects", {})
-    selected_object = next(
-        (records[-1] for records in selected_objects.values() if records),
-        None,
-    )
+def show_selected_feature(selected_object: Optional[dict[str, Any]]) -> None:
+    """Show normalized properties from either supported map renderer."""
     if selected_object:
         selected_properties = selected_object.get("properties", selected_object)
         detail_lines = "<br/>".join(
@@ -482,7 +940,7 @@ def show_selected_map_feature(map_event: Any) -> None:
             f"{selected_properties.get(f'tooltip_label_{index}', '')}:"
             "</strong> "
             f"{selected_properties.get(f'tooltip_value_{index}', '')}"
-            for index in range(1, 5)
+            for index in range(1, 13)
             if selected_properties.get(f"tooltip_label_{index}")
         )
         st.markdown(
@@ -495,33 +953,48 @@ def show_selected_map_feature(map_event: Any) -> None:
         st.caption("Click a service area, block group, or point to keep its details visible.")
 
 
+def show_selected_map_feature(map_event: Any) -> None:
+    """Normalize a PyDeck selection and show it below the map."""
+    selected_objects = map_event.selection.get("objects", {})
+    selected_object = next(
+        (records[-1] for records in selected_objects.values() if records),
+        None,
+    )
+    show_selected_feature(selected_object)
+
+
 def show_map_legend(
     census_variable: Optional[str], show_vulnerable: bool, boundary_label: str
 ) -> None:
     """Render the shared state and selected-geography map legend."""
     census_items = {
         "Poverty rate": (
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(255,237,160,.75)"></span>Poverty &lt;10%</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(253,174,107,.8)"></span>10–&lt;20%</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(230,85,13,.75)"></span>20–&lt;30%</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(153,27,30,.8)"></span>30% or higher</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#ffffb2"></span>Poverty &lt;10%</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#fecc5c"></span>10–&lt;20%</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#fd8d3c"></span>20–&lt;30%</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#e31a1c"></span>30% or higher</span>'
         ),
         "Median household income": (
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(198,219,239,.75)"></span>Income &lt;$40K</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(107,174,214,.8)"></span>$40K–&lt;$60K</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(49,130,189,.75)"></span>$60K–&lt;$90K</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(8,81,156,.8)"></span>$90K or higher</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#c4e6c3"></span>Income &lt;$40K</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#6dbc90"></span>$40K–&lt;$60K</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#36877a"></span>$60K–&lt;$90K</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#1d4f60"></span>$90K or higher</span>'
         ),
         "Rural population share": (
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(237,248,233,.75)"></span>Fully urban</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(161,217,155,.8)"></span>Partly rural</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(49,163,84,.75)"></span>Majority rural</span>'
-            '<span class="legend-item"><span class="legend-swatch" style="background:rgba(0,90,50,.8)"></span>Fully rural</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#ffffcc"></span>Fully urban</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#c2e699"></span>Partly rural</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#78c679"></span>Majority rural</span>'
+            '<span class="legend-item"><span class="legend-swatch" style="background:#238443"></span>Fully rural</span>'
         ),
     }.get(census_variable, "")
+    vulnerable_legend_class = (
+        "legend-vulnerable-hatch"
+        if map_data_source == "PMTiles"
+        else "legend-vulnerable"
+    )
     vulnerable_item = (
         '<span class="legend-item"><span class="legend-swatch '
-        'legend-vulnerable"></span>Highest Disadvantaged Decile</span>'
+        f'{vulnerable_legend_class}"></span>Highest Disadvantaged Decile</span>'
         if show_vulnerable
         else ""
     )
@@ -544,12 +1017,31 @@ def show_footer() -> None:
     """Show the branded, linked source footer on every dashboard view."""
     st.divider()
     footer_sources, footer_brand = st.columns(
-        [5, 1.4], vertical_alignment="center"
+        [5, 1.4], vertical_alignment="top"
     )
     with footer_sources:
         st.markdown(
             """
-            <div class="footer-copy"><strong>Sources</strong><br>
+            <div class="footer-copy">
+            <strong>Analysis by Jose M. Macias III of Periphery Analytics.</strong><br>
+            He may be contacted at
+            <a href="mailto:jmacias@periphery-analytics.com">jmacias@periphery-analytics.com</a>.
+            <br><strong>Follow Jose's work and connect with him on:</strong>
+            <div class="social-links" aria-label="José M. Macias III social profiles">
+              <a class="social-link" href="https://www.linkedin.com/in/jmmac/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+                <span class="social-icon social-linkedin" aria-hidden="true">in</span>LinkedIn
+              </a>
+              <a class="social-link" href="https://x.com/jmmaciasiii" target="_blank" rel="noopener noreferrer" aria-label="X, formerly Twitter">
+                <span class="social-icon social-x" aria-hidden="true">𝕏</span>Twitter
+              </a>
+              <a class="social-link" href="https://bsky.app/profile/jmmaciasiii.bsky.social" target="_blank" rel="noopener noreferrer" aria-label="Bluesky">
+                <span class="social-icon social-bluesky" aria-hidden="true">◢</span>Bluesky
+              </a>
+              <a class="social-link" href="https://peripheryanalytics.substack.com" target="_blank" rel="noopener noreferrer" aria-label="Substack">
+                <span class="social-icon social-substack" aria-hidden="true">S</span>Substack
+              </a>
+            </div>
+            <strong>Sources</strong><br>
             <a href="https://echo.epa.gov/tools/data-downloads/sdwa-download-summary" target="_blank">U.S. EPA Safe Drinking Water Information System (SDWIS)</a> ·
             <a href="https://www.epa.gov/ground-water-and-drinking-water/public-water-system-service-areas" target="_blank">EPA Public Water System Service Areas v3.0</a> ·
             <a href="https://api.census.gov/data/2024/acs/acs5.html" target="_blank">U.S. Census Bureau 2020–2024 ACS five-year estimates</a> ·
@@ -567,11 +1059,9 @@ try:
     districts = load_csv("district_metrics.csv")
     systems = load_csv("district_water_systems.csv")
     district_geo = load_geojson("congressional_districts.geojson")
-    service_geo = load_geojson("cws_service_areas.geojson")
     counties = load_csv("county_metrics.csv")
     county_systems = load_csv("county_water_systems.csv")
     county_geo = load_geojson("counties.geojson")
-    county_service_geo = load_geojson("county_cws_service_areas.geojson")
     vulnerable_geo = load_geojson("vulnerable_block_groups.geojson")
     counties["county_geoid"] = counties["county_geoid"].astype(str).str.zfill(5)
     county_systems["county_geoid"] = (
@@ -584,16 +1074,14 @@ except FileNotFoundError as exc:
     )
     st.stop()
 
-
 st.markdown(
     """
     <div class="hero">
-      <div class="eyebrow">Public water infrastructure</div>
+
       <h1>Small Water Systems Explorer</h1>
       <p>Explore community water systems serving 3,300 people or fewer and the
-      communities within their EPA service areas. Search by congressional district
-      or county to connect water infrastructure, community conditions, and political
-      representation. Includes data on 5 states recently targeted by Iranian hackers.</p>
+      communities within their service areas. Search by congressional district
+      or county to connect water infrastructure, community conditions, and political representation.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -608,6 +1096,7 @@ with st.sidebar:
         available_states,
         index=None,
         placeholder="Select a state",
+        format_func=lambda state_code: STATE_NAMES.get(state_code, state_code),
     )
     analysis_level = st.radio(
         "Step 2: Analysis level",
@@ -641,11 +1130,15 @@ with st.sidebar:
     )
     selected_county = selected_area if analysis_level == "County" else None
 
+    # PMTiles is the production renderer. GeoJSON remains an automatic fallback
+    # when the component reports that its vector archive cannot be loaded.
+    map_data_source = "PMTiles"
+
     if selected_state:
         st.divider()
         st.subheader("Outside Certification Requirements")
         st.caption(
-            "The vulnerable community water systems identified here serve 3,300 people or fewer "
+            "The vulnerable community water systems (CWS) identified here serve 3,300 people or fewer "
             "and are not required to certify completion of a risk and resilience "
             "assessment or emergency response plan to EPA under "
             "[America's Water Infrastructure Act (AWIA)]"
@@ -679,7 +1172,7 @@ with st.sidebar:
     st.divider()
     with st.expander("Data Sources"):
         st.caption(
-            "Analysis by Jose M. Macias III of Periphery Analytics. Data sources: "
+            "Analysis by Jose M. Macias III of Periphery Analytics. He may be contacted at jmacias@periphery-analytics.com. Data sources: "
             "U.S. EPA SDWIS and U.S. Census Bureau American Community Survey "
             "five-year estimates. Geocoded CWS administrative points are based on "
             "contact addresses reported to EPA and may contain positional errors; "
@@ -719,9 +1212,17 @@ try:
     communities_geo = load_geojson(
         f"block_groups/{selected_state.lower()}_block_groups.geojson"
     )
+    service_geo = load_geojson(
+        "district_service_areas/"
+        f"{selected_state.lower()}_service_areas.geojson"
+    )
+    county_service_geo = load_geojson(
+        "county_service_areas/"
+        f"{selected_state.lower()}_service_areas.geojson"
+    )
 except FileNotFoundError as exc:
     st.error(
-        f"State block-group data are missing: {exc}. Run water_inf_analysis.R "
+        f"State spatial data are missing: {exc}. Run water_inf_analysis.R "
         "through the dashboard export section."
     )
     st.stop()
@@ -787,26 +1288,66 @@ if not selected_area:
         census_variable,
         show_vulnerable,
     )
-    state_deck = pdk.Deck(
-        layers=state_layers,
-        initial_view_state=map_view(selected_state_boundaries),
-        map_style=MAP_STYLE,
-        tooltip=MAP_TOOLTIP,
-    )
     show_map_legend(census_variable, show_vulnerable, analysis_level.title())
-    state_map_event = st.pydeck_chart(
-        state_deck,
-        use_container_width=True,
-        height=650,
-        on_select="rerun",
-        selection_mode="single-object",
-        key=f"state-map-{selected_state}-{analysis_level}",
-    )
+    state_map_selection = None
+    if map_data_source == "PMTiles":
+        pmtiles_slot = st.empty()
+        with pmtiles_slot:
+            state_map_selection = render_pmtiles_map(
+                selected_state_boundaries,
+                selected_state,
+                analysis_level,
+                None,
+                census_variable,
+                show_vulnerable,
+                key=f"pmtiles-state-{selected_state}-{analysis_level}",
+            )
+        state_pmtiles_error = pmtiles_error(state_map_selection)
+        if state_pmtiles_error:
+            pmtiles_slot.empty()
+            show_pmtiles_fallback_notice(state_pmtiles_error)
+            state_deck = pdk.Deck(
+                layers=state_layers,
+                initial_view_state=map_view(selected_state_boundaries),
+                map_style=MAP_STYLE,
+                tooltip=MAP_TOOLTIP,
+            )
+            state_map_event = st.pydeck_chart(
+                state_deck,
+                use_container_width=True,
+                height=650,
+                on_select="rerun",
+                selection_mode="single-object",
+                key=f"state-map-fallback-{selected_state}-{analysis_level}",
+            )
+            state_map_selection = None
+        else:
+            state_map_event = None
+    else:
+        state_deck = pdk.Deck(
+            layers=state_layers,
+            initial_view_state=map_view(selected_state_boundaries),
+            map_style=MAP_STYLE,
+            tooltip=MAP_TOOLTIP,
+        )
+        state_map_event = st.pydeck_chart(
+            state_deck,
+            use_container_width=True,
+            height=650,
+            on_select="rerun",
+            selection_mode="single-object",
+            key=f"state-map-{selected_state}-{analysis_level}",
+        )
     st.caption(
         f"The statewide view shows all available {analysis_level.lower()} "
         "boundaries and small-CWS data for the selected state."
     )
-    show_selected_map_feature(state_map_event)
+    if state_map_selection is not None:
+        show_selected_feature(state_map_selection)
+    elif state_map_event is not None:
+        show_selected_map_feature(state_map_event)
+    else:
+        show_selected_feature(None)
     show_footer()
     st.stop()
 
@@ -846,7 +1387,7 @@ if selected_county:
           <div class="district-meta">
             Congressional districts&nbsp; <strong>{county_row['congressional_districts']}</strong><br>
             Representatives&nbsp; <strong>{county_row['elected_representatives']}</strong>&nbsp;
-            <span class="party-tag">{str(county_row['representative_parties']).title()}</span>
+            <span class="party-tag {party_tag_class(county_row['representative_parties'])}">{str(county_row['representative_parties']).title()}</span>
           </div>
         </div>
         """,
@@ -892,26 +1433,66 @@ if selected_county:
             census_variable,
             show_vulnerable,
         )
-        deck = pdk.Deck(
-            layers=layers,
-            initial_view_state=map_view(selected_boundary_geo),
-            map_style=MAP_STYLE,
-            tooltip=MAP_TOOLTIP,
-        )
         show_map_legend(census_variable, show_vulnerable, "County")
-        map_event = st.pydeck_chart(
-            deck,
-            use_container_width=True,
-            height=650,
-            on_select="rerun",
-            selection_mode="single-object",
-            key=f"county-map-{selected_county}",
-        )
+        map_selection = None
+        if map_data_source == "PMTiles":
+            pmtiles_slot = st.empty()
+            with pmtiles_slot:
+                map_selection = render_pmtiles_map(
+                    selected_boundary_geo,
+                    selected_state,
+                    analysis_level,
+                    selected_county,
+                    census_variable,
+                    show_vulnerable,
+                    key=f"pmtiles-county-{selected_county}",
+                )
+            active_pmtiles_error = pmtiles_error(map_selection)
+            if active_pmtiles_error:
+                pmtiles_slot.empty()
+                show_pmtiles_fallback_notice(active_pmtiles_error)
+                deck = pdk.Deck(
+                    layers=layers,
+                    initial_view_state=map_view(selected_boundary_geo),
+                    map_style=MAP_STYLE,
+                    tooltip=MAP_TOOLTIP,
+                )
+                map_event = st.pydeck_chart(
+                    deck,
+                    use_container_width=True,
+                    height=650,
+                    on_select="rerun",
+                    selection_mode="single-object",
+                    key=f"county-map-fallback-{selected_county}",
+                )
+                map_selection = None
+            else:
+                map_event = None
+        else:
+            deck = pdk.Deck(
+                layers=layers,
+                initial_view_state=map_view(selected_boundary_geo),
+                map_style=MAP_STYLE,
+                tooltip=MAP_TOOLTIP,
+            )
+            map_event = st.pydeck_chart(
+                deck,
+                use_container_width=True,
+                height=650,
+                on_select="rerun",
+                selection_mode="single-object",
+                key=f"county-map-{selected_county}",
+            )
         st.caption(
             "County boundaries organize the profile; service areas and block "
             "groups remain the underlying EPA and Census geographies."
         )
-        show_selected_map_feature(map_event)
+        if map_selection is not None:
+            show_selected_feature(map_selection)
+        elif map_event is not None:
+            show_selected_map_feature(map_event)
+        else:
+            show_selected_feature(None)
 
     with context_col:
         st.markdown("### About the County")
@@ -1078,7 +1659,7 @@ st.markdown(
       </div>
       <div class="district-meta">
         Representative&nbsp; <strong>{district_row['candidate']}</strong>&nbsp;
-        <span class="party-tag">{str(district_row['party']).title()}</span>
+        <span class="party-tag {party_tag_class(district_row['party'])}">{str(district_row['party']).title()}</span>
       </div>
     </div>
     """,
@@ -1118,21 +1699,56 @@ with map_col:
         census_variable,
         show_vulnerable,
     )
-    deck = pdk.Deck(
-        layers=layers,
-        initial_view_state=map_view(selected_district_geo),
-        map_style=MAP_STYLE,
-        tooltip=MAP_TOOLTIP,
-    )
     show_map_legend(census_variable, show_vulnerable, "Congressional District")
-    map_event = st.pydeck_chart(
-        deck,
-        use_container_width=True,
-        height=650,
-        on_select="rerun",
-        selection_mode="single-object",
-        key=f"district-map-{selected_district}",
-    )
+    map_selection = None
+    if map_data_source == "PMTiles":
+        pmtiles_slot = st.empty()
+        with pmtiles_slot:
+            map_selection = render_pmtiles_map(
+                selected_district_geo,
+                selected_state,
+                analysis_level,
+                selected_district,
+                census_variable,
+                show_vulnerable,
+                key=f"pmtiles-district-{selected_district}",
+            )
+        active_pmtiles_error = pmtiles_error(map_selection)
+        if active_pmtiles_error:
+            pmtiles_slot.empty()
+            show_pmtiles_fallback_notice(active_pmtiles_error)
+            deck = pdk.Deck(
+                layers=layers,
+                initial_view_state=map_view(selected_district_geo),
+                map_style=MAP_STYLE,
+                tooltip=MAP_TOOLTIP,
+            )
+            map_event = st.pydeck_chart(
+                deck,
+                use_container_width=True,
+                height=650,
+                on_select="rerun",
+                selection_mode="single-object",
+                key=f"district-map-fallback-{selected_district}",
+            )
+            map_selection = None
+        else:
+            map_event = None
+    else:
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=map_view(selected_district_geo),
+            map_style=MAP_STYLE,
+            tooltip=MAP_TOOLTIP,
+        )
+        map_event = st.pydeck_chart(
+            deck,
+            use_container_width=True,
+            height=650,
+            on_select="rerun",
+            selection_mode="single-object",
+            key=f"district-map-{selected_district}",
+        )
     if census_variable:
         st.caption(
             f"Census block groups are colored by {census_variable.lower()}. "
@@ -1143,7 +1759,12 @@ with map_col:
             "No Census shading is active. Choose an optional Census variable "
             "in the sidebar; blue outlines show EPA service areas."
         )
-    show_selected_map_feature(map_event)
+    if map_selection is not None:
+        show_selected_feature(map_selection)
+    elif map_event is not None:
+        show_selected_map_feature(map_event)
+    else:
+        show_selected_feature(None)
 
 with context_col:
     st.markdown("### About the District")
@@ -1255,7 +1876,7 @@ with methods_tab:
         ### How to read this dashboard
 
         - **Small CWS** means an active community water system in the selected EPA
-          primacy jurisdiction serving 3,300 people or fewer.
+          primacy jurisdiction serving 3,300 people or fewer. Data used was last updated Q2 of 2026.
         - **Service areas** come from EPA's Community Water System Service Areas v3.0.
           Some boundaries are authoritative; others are modeled.
         - **Community estimates** use EPA's building-weighted 2020 Census crosswalk.

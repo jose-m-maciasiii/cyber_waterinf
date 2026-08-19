@@ -16,13 +16,47 @@ streamlit run app.py
 
 The map uses CARTO's public Positron basemap and does not require an API key.
 
+The production map streams the national **PMTiles** archive from Google Cloud
+Storage. If the archive cannot be loaded, the dashboard automatically replaces
+it with the state-level GeoJSON fallback. To test a newly generated local archive,
+start the included range-enabled server in a second terminal:
+
+``` bash
+python dashboard/serve_tiles.py
+```
+
+Then start Streamlit with a local override:
+
+``` bash
+PMTILES_URL=http://localhost:8001/water_infrastructure.pmtiles streamlit run dashboard/app.py
+```
+
+The production default is
+`https://storage.googleapis.com/water-system-maps/water_infrastructure.pmtiles`.
+Set `PMTILES_URL` to test another range-enabled archive host.
+
+The national R pipeline reuses the existing OSM caches for GA, MI, MN, NJ, and
+SD and uses the U.S. Census batch geocoder for the other states. Census results
+are cached under `data/geocoded/`, so ordinary reruns do not repeat completed
+requests. Use `RUN_CENSUS_GEOCODING=false Rscript water_inf_analysis.R` to
+forbid new geocoder requests, or `BUILD_PMTILES=false Rscript
+water_inf_analysis.R` to skip rebuilding the tile archive.
+
 ## Map delivery options
 
-The app defaults to district-filtered GeoJSON rendered with PyDeck. The complete map payload is currently small enough for this to remain a practical, zero-infrastructure deployment.
+The app uses a bidirectional MapLibre component to stream PMTiles and return
+clicked feature details to Streamlit. State-split GeoJSON rendered with PyDeck
+is retained as the automatic failure fallback.
 
-The R export also creates `data/water_infrastructure.pmtiles`. For a MapLibre deployment, host that file on a service that supports HTTP byte-range requests (such as S3, Cloudflare R2, or a suitable static host), then load its public URL with `anymap-ts` or the MapLibre PMTiles protocol. Do not rely on Streamlit's built-in static-file server for production PMTiles delivery; `.pmtiles` is not one of its officially supported static media types.
+The R export also creates `data/water_infrastructure.pmtiles`. For deployment,
+host that file on a service supporting HTTP byte-range requests and CORS, then
+set `PMTILES_URL` when a non-default host is needed. The generated archive is
+ignored by Git because the production copy is stored externally.
 
-The archive is regenerated with the analysis pipeline and contains six named layers: `congressional_districts`, `counties`, `cws_service_areas`, `county_cws_service_areas`, `all_block_groups`, and `vulnerable_block_groups`. Keep `data/water_infrastructure.pmtiles` with the deployment artifacts even while the Streamlit app uses state-split GeoJSON as its default, zero-infrastructure map source.
+The archive is regenerated with the analysis pipeline and contains seven named
+layers: `congressional_districts`, `counties`, `cws_service_areas`,
+`county_cws_service_areas`, `all_block_groups`, `vulnerable_block_groups`, and
+`administrative_points`.
 
 ## Principal outputs
 
@@ -73,7 +107,7 @@ The national descriptive counts below include systems coded as active in the 202
 |       |                                                     |      |                                                                                                                                                                                                                                                                |      |                       |     |
 +-------+-----------------------------------------------------+------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------+-----------------------+-----+
 
-The remainder of the analysis focuses on active CWSs serving **3,300 or fewer people**, identified using EPA’s POP_CAT_3_CODE. Nationally, 39,759 active CWSs fall within this size category in the data snapshot. The detailed spatial analysis currently covers Georgia, Michigan, Minnesota, New Jersey, and South Dakota—the five states included in the study dataset.
+The remainder of the analysis focuses on active CWSs serving **3,300 or fewer people**, identified using EPA’s POP_CAT_3_CODE. Nationally, 39,759 active CWSs fall within this size category in the data snapshot. The detailed spatial analysis covers all 50 states. The District of Columbia and U.S. territories are outside the current scope.
 
 The analysis also connects each target CWS to its associated EPA records, including:
 

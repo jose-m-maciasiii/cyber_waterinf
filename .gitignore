@@ -4,6 +4,11 @@ data/SDWA_latest_downloads/
 data/geocoded/
 data/tiles/
 *.DS_Store
+__pycache__/
+*.py[cod]
+
+# Generated national tile archive. Production streams the hosted GCS copy.
+dashboard/data/water_infrastructure.pmtiles
 
 *.csv
 # Keep the small, precomputed CSV inputs required by the Streamlit deployment.

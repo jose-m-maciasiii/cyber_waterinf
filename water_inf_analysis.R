@@ -5,10 +5,43 @@ library(tidygeocoder)
 library(janitor)
 library(sf)
 
+options(tigris_use_cache = TRUE)
+
 ######################## Water Inf Section ########################
-# U.S. states targted by iran
-state_list <- c("MI", "MN", "NJ", "SD", "GA")
-# EPA regions MUST match with state_code MI = 5, MN = 5, NJ = 2, SD =8, GA =4
+# All 50 states. EPA-region assignments come from the maintained lookup rather
+# than hard-coded state/region pairs. DC and territories remain out of scope.
+epa_region_lookup <- read_csv(
+    "data/epa_regions/epa_regions.csv",
+    show_col_types = FALSE
+) |>
+    clean_names() |>
+    filter(state %in% state.abb) |>
+    transmute(
+        state = as.character(state),
+        expected_epa_region = as.integer(epa_region)
+    )
+
+state_list <- state.abb
+
+stopifnot(
+    nrow(epa_region_lookup) == 50,
+    n_distinct(epa_region_lookup$state) == 50,
+    setequal(epa_region_lookup$state, state_list)
+)
+
+# The original five-state geocodes are reused from their OSM cache. The
+# remaining states use the U.S. Census batch geocoder and save resumable caches.
+# Set RUN_CENSUS_GEOCODING=false to rebuild the non-spatial outputs without
+# making new geocoding requests.
+previously_geocoded_states <- c("GA", "MI", "MN", "NJ", "SD")
+run_census_geocoding <- !identical(
+    str_to_lower(Sys.getenv("RUN_CENSUS_GEOCODING", "true")),
+    "false"
+)
+build_pmtiles <- !identical(
+    str_to_lower(Sys.getenv("BUILD_PMTILES", "true")),
+    "false"
+)
 ## read SWDA data
 water_faci <- read_csv("data/SDWA_latest_downloads/SDWA_FACILITIES.csv") |>
     clean_names() |>
@@ -24,7 +57,20 @@ water_pub <- read_csv(
             pws_type_code == "CWS" &
             primacy_agency_code %in% state_list
     ) |>
-    mutate(epa_region = as.numeric(epa_region))
+    mutate(epa_region = as.numeric(epa_region)) |>
+    left_join(
+        epa_region_lookup,
+        by = c("primacy_agency_code" = "state"),
+        relationship = "many-to-one"
+    )
+
+epa_region_mismatches <- water_pub |>
+    filter(
+        !is.na(epa_region),
+        epa_region != expected_epa_region
+    )
+
+stopifnot(nrow(epa_region_mismatches) == 0)
 
 # Add system-level summaries from the SDWIS facility, inspection, and
 # violation/enforcement files. Counts are historical records retained in the
@@ -243,6 +289,9 @@ census <- get_acs(
         broadband_households = broadband_householdsE,
         broadband_rate = 100 * broadband_households / internet_households
     ) |>
+    # CT, IL, and NH include an ACS placeholder row where 119th Congress
+    # districts are not defined. It has no district number and is not a seat.
+    filter(!is.na(district)) |>
     select(-all_of(acs_estimate_columns))
 
 # County-level ACS measures provide a second public-facing geography alongside
@@ -776,29 +825,6 @@ target_counties_2024 <- census_county |>
 
 ########################
 
-# FUNCTION to subset for targeted states
-
-water_state <- function(state, region_input) {
-    water_pub |>
-        filter(
-            primacy_agency_code == state &
-                epa_region == region_input
-        )
-}
-
-mi_water_pub <- water_state("MI", 5)
-nrow(mi_water_pub)
-mn_water_pub <- water_state("MN", 5)
-nrow(mn_water_pub)
-nj_water_pub <- water_state("NJ", 2)
-nrow(nj_water_pub)
-sd_water_pub <- water_state("SD", 8)
-nrow(sd_water_pub)
-ga_water_pub <- water_state("GA", 4)
-nrow(ga_water_pub)
-
-glimpse(mi_water_pub)
-
 # Forward geocode facility mailing addresses. The Census batch service is a
 # better fit than the public Nominatim/OSM endpoint for thousands of US
 # addresses. Results are saved after each chunk so an interrupted run resumes.
@@ -808,7 +834,8 @@ addys_for_water_geocode <- function(
     chunk_size = 1000,
     retries = 3,
     timeout = 10,
-    cache_dir = "data/geocoded"
+    cache_dir = "data/geocoded",
+    cache_only = FALSE
 ) {
     input_data <- data |>
         mutate(.input_row = row_number())
@@ -892,6 +919,10 @@ addys_for_water_geocode <- function(
             existing_geocodes,
             by = c("address_line1", "city_name", "zip_code", "state_code")
         )
+
+    if (cache_only) {
+        pending_lookup <- pending_lookup |> slice(0)
+    }
     chunks <- split(
         pending_lookup,
         ceiling(seq_len(nrow(pending_lookup)) / chunk_size)
@@ -1010,28 +1041,52 @@ addys_for_water_geocode <- function(
         select(-.input_row)
 }
 ######################## GEO CODEING ########################
-addy_mi_water_pub <- addys_for_water_geocode(mi_water_pub, method = "osm")
-addy_mn_water_pub <- addys_for_water_geocode(mn_water_pub, method = "osm")
-addy_nj_water_pub <- addys_for_water_geocode(nj_water_pub, method = "osm")
-addy_sd_water_pub <- addys_for_water_geocode(sd_water_pub, method = "osm")
-addy_ga_water_pub <- addys_for_water_geocode(ga_water_pub, method = "osm")
+cached_water_pub <- map_dfr(
+    previously_geocoded_states,
+    ~ addys_for_water_geocode(
+        water_pub |> filter(primacy_agency_code == .x),
+        method = "osm",
+        cache_only = TRUE
+    )
+)
+
+states_requiring_geocodes <- setdiff(
+    state_list,
+    previously_geocoded_states
+)
+
+new_water_pub <- if (run_census_geocoding) {
+    map_dfr(
+        states_requiring_geocodes,
+        ~ addys_for_water_geocode(
+            water_pub |> filter(primacy_agency_code == .x),
+            method = "census",
+            chunk_size = 1000
+        )
+    )
+} else {
+    message(
+        "Skipping Census geocoding for 45 states. Set ",
+        "RUN_CENSUS_GEOCODING=true to enable it."
+    )
+    water_pub |>
+        filter(primacy_agency_code %in% states_requiring_geocodes) |>
+        mutate(latitude = NA_real_, longitude = NA_real_)
+}
 
 # Count active community water systems (CWS) whose geocoded address point falls
 # within each congressional district. These are administrative address points,
 # so the result should not be interpreted as a service-area population count.
 cws_water_system_points <- bind_rows(
-    addy_mi_water_pub,
-    addy_mn_water_pub,
-    addy_nj_water_pub,
-    addy_sd_water_pub,
-    addy_ga_water_pub
+    cached_water_pub,
+    new_water_pub
 ) |>
     filter(
         pws_type_code == "CWS",
         is.finite(latitude),
         is.finite(longitude),
-        between(latitude, 24, 50),
-        between(longitude, -125, -66)
+        between(latitude, 18, 72),
+        between(longitude, -180, -66)
     ) |>
     distinct(pwsid, .keep_all = TRUE) |>
     st_as_sf(
@@ -2104,8 +2159,16 @@ vulnerable_block_groups_dashboard <- most_vulnerable_cws_block_groups |>
 
 service_areas_dashboard <- service_district_intersections |>
     left_join(
+        target_districts_2024 |>
+            st_drop_geometry() |>
+            select(congressional_district, state_po),
+        by = "congressional_district",
+        relationship = "many-to-one"
+    ) |>
+    left_join(
         target_service_areas |>
             st_drop_geometry() |>
+            distinct(pwsid, .keep_all = TRUE) |>
             select(
                 pwsid,
                 pws_name,
@@ -2118,6 +2181,7 @@ service_areas_dashboard <- service_district_intersections |>
         relationship = "many-to-one"
     ) |>
     select(
+        state_po,
         congressional_district,
         pwsid,
         pws_name,
@@ -2131,8 +2195,16 @@ service_areas_dashboard <- service_district_intersections |>
 
 county_service_areas_dashboard <- service_county_intersections |>
     left_join(
+        target_counties_2024 |>
+            st_drop_geometry() |>
+            select(county_geoid, state_po),
+        by = "county_geoid",
+        relationship = "many-to-one"
+    ) |>
+    left_join(
         target_service_areas |>
             st_drop_geometry() |>
+            distinct(pwsid, .keep_all = TRUE) |>
             select(
                 pwsid,
                 pws_name,
@@ -2145,6 +2217,7 @@ county_service_areas_dashboard <- service_county_intersections |>
         relationship = "many-to-one"
     ) |>
     select(
+        state_po,
         county_geoid,
         pwsid,
         pws_name,
@@ -2159,6 +2232,34 @@ county_service_areas_dashboard <- service_county_intersections |>
 point_coordinates_dashboard <- cws_water_system_points |>
     st_drop_geometry() |>
     select(pwsid, latitude, longitude)
+
+administrative_points_dashboard <- cws_water_system_points |>
+    select(
+        pwsid,
+        pws_name,
+        primacy_agency_code,
+        population_served_count,
+        primary_source_code,
+        active_component_count
+    ) |>
+    rename(state_po = primacy_agency_code) |>
+    left_join(
+        cws_district_membership |>
+            st_drop_geometry() |>
+            distinct(pwsid, .keep_all = TRUE) |>
+            select(pwsid, congressional_district),
+        by = "pwsid",
+        relationship = "one-to-one"
+    ) |>
+    left_join(
+        cws_county_membership |>
+            st_drop_geometry() |>
+            distinct(pwsid, .keep_all = TRUE) |>
+            select(pwsid, county_geoid),
+        by = "pwsid",
+        relationship = "one-to-one"
+    ) |>
+    st_transform(4326)
 
 district_systems_dashboard <- service_district_intersections |>
     st_drop_geometry() |>
@@ -2261,17 +2362,48 @@ st_write(
     delete_dsn = TRUE,
     quiet = TRUE
 )
-st_write(
-    service_areas_dashboard,
-    file.path(dashboard_data_dir, "cws_service_areas.geojson"),
-    delete_dsn = TRUE,
-    quiet = TRUE
+# Split service-area intersections by state. At national scale this prevents
+# Streamlit from loading two countrywide service GeoJSONs before a state is
+# selected. The five-state deployment's legacy files may remain on disk, but
+# the app now reads these state partitions.
+district_service_dashboard_dir <- file.path(
+    dashboard_data_dir, "district_service_areas"
 )
-st_write(
-    county_service_areas_dashboard,
-    file.path(dashboard_data_dir, "county_cws_service_areas.geojson"),
-    delete_dsn = TRUE,
-    quiet = TRUE
+county_service_dashboard_dir <- file.path(
+    dashboard_data_dir, "county_service_areas"
+)
+dir.create(
+    district_service_dashboard_dir,
+    recursive = TRUE,
+    showWarnings = FALSE
+)
+dir.create(
+    county_service_dashboard_dir,
+    recursive = TRUE,
+    showWarnings = FALSE
+)
+walk(
+    state_list,
+    function(state_abbr) {
+        st_write(
+            service_areas_dashboard |> filter(state_po == state_abbr),
+            file.path(
+                district_service_dashboard_dir,
+                str_glue("{str_to_lower(state_abbr)}_service_areas.geojson")
+            ),
+            delete_dsn = TRUE,
+            quiet = TRUE
+        )
+        st_write(
+            county_service_areas_dashboard |> filter(state_po == state_abbr),
+            file.path(
+                county_service_dashboard_dir,
+                str_glue("{str_to_lower(state_abbr)}_service_areas.geojson")
+            ),
+            delete_dsn = TRUE,
+            quiet = TRUE
+        )
+    }
 )
 write_csv(
     district_dashboard |> st_drop_geometry(),
@@ -2294,7 +2426,7 @@ write_csv(
 # file on an HTTP range-enabled static service (for example S3, R2, or Pages)
 # and point the Streamlit frontend to its public URL. The GeoJSON exports remain
 # the no-infrastructure fallback for local development and small deployments.
-if (requireNamespace("freestiler", quietly = TRUE)) {
+if (build_pmtiles && requireNamespace("freestiler", quietly = TRUE)) {
     freestiler::freestile(
         list(
             congressional_districts = freestiler::freestile_layer(
@@ -2326,11 +2458,20 @@ if (requireNamespace("freestiler", quietly = TRUE)) {
                 vulnerable_block_groups_dashboard,
                 min_zoom = 5,
                 max_zoom = 11
+            ),
+            administrative_points = freestiler::freestile_layer(
+                administrative_points_dashboard,
+                min_zoom = 4,
+                max_zoom = 14
             )
         ),
         file.path(dashboard_data_dir, "water_infrastructure.pmtiles"),
         overwrite = TRUE
     )
+} else if (build_pmtiles) {
+    message("Install freestiler to create the optional PMTiles bundle.")
+} else {
+    message("Skipping PMTiles export because BUILD_PMTILES=false.")
 }
 
 vulnerable_block_group_summary
