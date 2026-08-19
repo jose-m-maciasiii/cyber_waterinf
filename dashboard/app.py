@@ -1154,7 +1154,7 @@ with st.sidebar:
             ),
         )
         st.caption(
-            "When selected, dark red block groups represent the most disadvantaged "
+            "When selected, black diamonds represent the most disadvantaged "
             "10% based equally on high poverty and low median household income."
         )
         st.subheader("Optional Census Variables")

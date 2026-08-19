@@ -234,8 +234,12 @@ census_variables <- c(
 acs_estimate_columns <- str_c(names(census_variables), "E")
 
 # Detailed poverty table B17001 is not published at the block-group level.
-# Use collapsed table C17002 there; its first two ratio categories together
-# represent the population below the poverty threshold.
+# For block-group poverty estimates, use collapsed table C17002 rather than
+# B17001. C17002 provides the same poverty-status with fewer categories,
+# making it suitable for reconstructing the population below poverty at this
+# geography. The first two income-to-poverty ratio categories (<0.50 and
+# 0.50-0.99) together represent the population below the poverty threshold.
+
 block_group_census_variables <- c(
     census_variables[
         !names(census_variables) %in%
@@ -2367,10 +2371,12 @@ st_write(
 # selected. The five-state deployment's legacy files may remain on disk, but
 # the app now reads these state partitions.
 district_service_dashboard_dir <- file.path(
-    dashboard_data_dir, "district_service_areas"
+    dashboard_data_dir,
+    "district_service_areas"
 )
 county_service_dashboard_dir <- file.path(
-    dashboard_data_dir, "county_service_areas"
+    dashboard_data_dir,
+    "county_service_areas"
 )
 dir.create(
     district_service_dashboard_dir,
